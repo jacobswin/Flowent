@@ -310,6 +310,7 @@ export function ProcessCanvas() {
                 event.globalY,
                 graphNodes,
                 sourceNodeId,
+                canvas.viewport,
               )
 
               if (targetNode) {
@@ -433,7 +434,7 @@ export function ProcessCanvas() {
         hasSelection={canvas.selectedNodeIds.size > 0}
       />
 
-      <div ref={hostRef} className="pixi-host" aria-label="Process canvas" />
+      <div ref={hostRef} className="pixi-host" aria-label="Process canvas" tabIndex={0} />
 
       <div className="keyboard-hint" aria-hidden="true">
         <span><kbd>A</kbd> Activity</span>
@@ -470,18 +471,23 @@ export function ProcessCanvas() {
 }
 
 function findNodeAtPosition(
-  x: number,
-  y: number,
+  screenX: number,
+  screenY: number,
   nodes: ReturnType<typeof toGraphNode>[],
   excludeNodeId: string,
+  viewport: { x: number; y: number; zoom: number },
 ): ReturnType<typeof toGraphNode> | null {
+  // Convert screen coordinates to world coordinates
+  const worldX = (screenX - viewport.x) / viewport.zoom
+  const worldY = (screenY - viewport.y) / viewport.zoom
+
   for (const node of nodes) {
     if (node.id === excludeNodeId) continue
     if (
-      x >= node.x &&
-      x <= node.x + node.width &&
-      y >= node.y &&
-      y <= node.y + node.height
+      worldX >= node.x &&
+      worldX <= node.x + node.width &&
+      worldY >= node.y &&
+      worldY <= node.y + node.height
     ) {
       return node
     }

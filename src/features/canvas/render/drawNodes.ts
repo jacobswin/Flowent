@@ -92,7 +92,7 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds:
 }
 
 function drawPorts(container: Container, node: GraphNode): void {
-  const portRadius = 5
+  const portRadius = 6
   const portColor = 0xc4c4c6
   const portHoverColor = 0x0071e3
 
@@ -102,29 +102,35 @@ function drawPorts(container: Container, node: GraphNode): void {
     const { x, y } = getPortPosition(node, port.id)
     const portCircle = new Graphics()
 
+    // Draw visible port
     portCircle.circle(x - node.x, y - node.y, portRadius)
     portCircle.fill(0xffffff)
-    portCircle.stroke({ color: portColor, width: 1.5 })
+    portCircle.stroke({ color: portColor, width: 2 })
 
-    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).eventMode = 'static'
-    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).cursor = 'crosshair'
-    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).label = `port:${port.id}`
+    // Add larger hit area
+    const hitArea = new Graphics()
+    hitArea.circle(x - node.x, y - node.y, portRadius + 8)
+    hitArea.fill({ color: 0x000000, alpha: 0.001 })
+    hitArea.label = `port:${port.id}`
+    ;(hitArea as Graphics & { eventMode?: string; cursor?: string }).eventMode = 'static'
+    ;(hitArea as Graphics & { eventMode?: string; cursor?: string }).cursor = 'crosshair'
 
-    portCircle.on('pointerover', () => {
+    hitArea.on('pointerover', () => {
       portCircle.clear()
-      portCircle.circle(x - node.x, y - node.y, portRadius + 1)
+      portCircle.circle(x - node.x, y - node.y, portRadius + 2)
       portCircle.fill(0xffffff)
-      portCircle.stroke({ color: portHoverColor, width: 2 })
+      portCircle.stroke({ color: portHoverColor, width: 2.5 })
     })
 
-    portCircle.on('pointerout', () => {
+    hitArea.on('pointerout', () => {
       portCircle.clear()
       portCircle.circle(x - node.x, y - node.y, portRadius)
       portCircle.fill(0xffffff)
-      portCircle.stroke({ color: portColor, width: 1.5 })
+      portCircle.stroke({ color: portColor, width: 2 })
     })
 
     container.addChild(portCircle)
+    container.addChild(hitArea)
   }
 }
 

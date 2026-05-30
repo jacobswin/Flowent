@@ -38,6 +38,10 @@ export function ProcessCanvas() {
         case 'tool-start-end':
           canvas.addEnd()
           break
+        case 'tool-connector':
+          // Toggle connector mode indicator
+          canvas.toggleConnectorMode()
+          break
         case 'auto-layout':
           canvas.autoLayout()
           break
@@ -264,6 +268,11 @@ export function ProcessCanvas() {
               portDragging = true
               portStartX = event.globalX
               portStartY = event.globalY
+
+              // Start connection in connector mode
+              if (canvas.connectorMode) {
+                canvas.startConnection(sourceNodeId, label.replace('port:', ''))
+              }
             })
 
             child.on('globalpointermove', (event: FederatedPointerEvent) => {
@@ -305,6 +314,11 @@ export function ProcessCanvas() {
 
               if (targetNode) {
                 canvas.onConnect(sourceNodeId, targetNode.id)
+              }
+
+              // End connection if in connector mode
+              if (canvas.connectorMode && canvas.connectionStart) {
+                canvas.endConnection(targetNode?.id ?? sourceNodeId)
               }
             })
 

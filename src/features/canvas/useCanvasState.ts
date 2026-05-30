@@ -91,6 +91,8 @@ export function useCanvasState() {
   )
   const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const [connectorMode, setConnectorMode] = useState(false)
+  const [connectionStart, setConnectionStart] = useState<{ nodeId: string; portId: string } | null>(null)
 
   const document = history.present
 
@@ -156,6 +158,22 @@ export function useCanvasState() {
     // No-op for now
   }, [])
 
+  const toggleConnectorMode = useCallback(() => {
+    setConnectorMode((prev) => !prev)
+    setConnectionStart(null)
+  }, [])
+
+  const startConnection = useCallback((nodeId: string, portId: string) => {
+    setConnectionStart({ nodeId, portId })
+  }, [])
+
+  const endConnection = useCallback((targetNodeId: string) => {
+    if (connectionStart && connectionStart.nodeId !== targetNodeId) {
+      onConnect(connectionStart.nodeId, targetNodeId)
+    }
+    setConnectionStart(null)
+  }, [connectionStart, onConnect])
+
   const onPaneClick = useCallback(() => {
     setHistory((current) => ({
       ...current,
@@ -167,6 +185,7 @@ export function useCanvasState() {
       },
     }))
     setEditorNodeId(null)
+    setConnectionStart(null)
   }, [])
 
   const openEditor = useCallback((nodeId: string) => {
@@ -457,10 +476,15 @@ export function useCanvasState() {
     selectedNodeIds,
     editorNode,
     marquee,
+    connectorMode,
+    connectionStart,
     startMarquee: useCallback((x: number, y: number) => setMarquee({ x1: x, y1: y, x2: x, y2: y }), []),
     updateMarquee: useCallback((x: number, y: number) => setMarquee((c) => c ? { ...c, x2: x, y2: y } : null), []),
     endMarquee: useCallback(() => setMarquee(null), []),
     selectNodesInRect,
+    toggleConnectorMode,
+    startConnection,
+    endConnection,
     onNodesChange,
     onEdgesChange,
     onConnect,

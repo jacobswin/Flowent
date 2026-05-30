@@ -15,6 +15,9 @@ export type CanvasAction =
   | 'undo'
   | 'redo'
   | 'delete'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
   | null
 
 export function mapKeyToAction(event: KeyEventLike): CanvasAction {
@@ -59,6 +62,18 @@ export function mapKeyToAction(event: KeyEventLike): CanvasAction {
 
   if (!hasMeta && (key === 'delete' || key === 'backspace')) {
     return 'delete'
+  }
+
+  if (!hasMeta && (key === '+' || key === '=')) {
+    return 'zoom-in'
+  }
+
+  if (!hasMeta && key === '-') {
+    return 'zoom-out'
+  }
+
+  if (!hasMeta && key === '0') {
+    return 'zoom-reset'
   }
 
   return null

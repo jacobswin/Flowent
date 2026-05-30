@@ -50,6 +50,15 @@ export function ProcessCanvas() {
         case 'delete':
           canvas.removeSelected()
           break
+        case 'zoom-in':
+          canvas.zoomIn()
+          break
+        case 'zoom-out':
+          canvas.zoomOut()
+          break
+        case 'zoom-reset':
+          canvas.zoomReset()
+          break
       }
     },
     [canvas],
@@ -125,7 +134,34 @@ export function ProcessCanvas() {
       hitArea.cursor = 'default'
       layers.overlayLayer.addChild(hitArea)
 
+      let isPanning = false
+      let panStartX = 0
+      let panStartY = 0
+      let spaceDown = false
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && !e.repeat) {
+          spaceDown = true
+          hitArea.cursor = 'grab'
+        }
+      })
+
+      window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+          spaceDown = false
+          hitArea.cursor = 'default'
+        }
+      })
+
       hitArea.on('pointerdown', (event: FederatedPointerEvent) => {
+        if (spaceDown) {
+          isPanning = true
+          panStartX = event.globalX
+          panStartY = event.globalY
+          hitArea.cursor = 'grabbing'
+          return
+        }
+
         isMarqueeDragging = true
         marqueeStartX = event.globalX
         marqueeStartY = event.globalY
@@ -134,6 +170,15 @@ export function ProcessCanvas() {
       })
 
       hitArea.on('globalpointermove', (event: FederatedPointerEvent) => {
+        if (isPanning) {
+          const dx = event.globalX - panStartX
+          const dy = event.globalY - panStartY
+          canvas.panBy(dx, dy)
+          panStartX = event.globalX
+          panStartY = event.globalY
+          return
+        }
+
         if (!isMarqueeDragging) return
 
         const x1 = Math.min(marqueeStartX, event.globalX)
@@ -148,6 +193,12 @@ export function ProcessCanvas() {
       })
 
       hitArea.on('pointerup', (event: FederatedPointerEvent) => {
+        if (isPanning) {
+          isPanning = false
+          hitArea.cursor = spaceDown ? 'grab' : 'default'
+          return
+        }
+
         if (!isMarqueeDragging) return
         isMarqueeDragging = false
         marqueeRect.visible = false
@@ -165,6 +216,7 @@ export function ProcessCanvas() {
       })
 
       hitArea.on('pointerupoutside', () => {
+        isPanning = false
         isMarqueeDragging = false
         marqueeRect.visible = false
       })
@@ -173,12 +225,17 @@ export function ProcessCanvas() {
         const width = host.clientWidth
         const height = host.clientHeight
 
+        // Apply viewport transform
+        stage.root.x = canvas.viewport.x
+        stage.root.y = canvas.viewport.y
+        stage.root.scale.set(canvas.viewport.zoom)
+
         // Update hit area size
         hitArea.clear()
-        hitArea.rect(0, 0, width, height)
+        hitArea.rect(0, 0, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
         hitArea.fill({ color: 0x000000, alpha: 0.001 })
 
-        drawGrid(layers.gridLayer, width, height)
+        drawGrid(layers.gridLayer, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
         drawEdges(layers.edgeLayer, graphEdges, nodesById, null)
         drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
 

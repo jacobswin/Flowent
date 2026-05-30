@@ -69,6 +69,10 @@ export type GraphCommand =
       type: 'MoveNodes'
       payload: { ids: string[]; dx: number; dy: number }
     }
+  | {
+      type: 'UpdateViewport'
+      payload: Partial<GraphViewport>
+    }
 
 export type ActivityNodeData = {
   title: string

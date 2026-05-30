@@ -74,6 +74,15 @@ export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocu
         },
       }
     }
+    case 'UpdateViewport': {
+      return {
+        ...doc,
+        viewport: {
+          ...doc.viewport,
+          ...command.payload,
+        },
+      }
+    }
     default:
       return doc
   }

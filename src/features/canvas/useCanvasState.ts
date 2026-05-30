@@ -379,6 +379,48 @@ export function useCanvasState() {
     })
   }, [document])
 
+  const zoomIn = useCallback(() => {
+    setHistory((current) => {
+      const newZoom = Math.min(current.present.viewport.zoom * 1.2, 3)
+      return pushHistory(current, {
+        ...current.present,
+        viewport: { ...current.present.viewport, zoom: newZoom },
+      })
+    })
+  }, [])
+
+  const zoomOut = useCallback(() => {
+    setHistory((current) => {
+      const newZoom = Math.max(current.present.viewport.zoom / 1.2, 0.2)
+      return pushHistory(current, {
+        ...current.present,
+        viewport: { ...current.present.viewport, zoom: newZoom },
+      })
+    })
+  }, [])
+
+  const zoomReset = useCallback(() => {
+    setHistory((current) =>
+      pushHistory(current, {
+        ...current.present,
+        viewport: { x: 0, y: 0, zoom: 1 },
+      }),
+    )
+  }, [])
+
+  const panBy = useCallback((dx: number, dy: number) => {
+    setHistory((current) =>
+      pushHistory(current, {
+        ...current.present,
+        viewport: {
+          x: current.present.viewport.x + dx,
+          y: current.present.viewport.y + dy,
+          zoom: current.present.viewport.zoom,
+        },
+      }),
+    )
+  }, [])
+
   const selectNodesInRect = useCallback(
     (x1: number, y1: number, x2: number, y2: number) => {
       setHistory((current) => {
@@ -436,6 +478,11 @@ export function useCanvasState() {
     undo: undoAction,
     redo: redoAction,
     autoLayout,
+    zoomIn,
+    zoomOut,
+    zoomReset,
+    panBy,
+    viewport: document.viewport,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
   }

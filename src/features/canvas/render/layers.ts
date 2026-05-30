@@ -30,7 +30,7 @@ export function drawGrid(layer: Container, width: number, height: number, gap = 
   layer.removeChildren()
 
   const grid = new Graphics()
-  grid.stroke({ color: 0xe5e5e7, alpha: 0.6, width: 1 })
+  grid.stroke({ color: 0xe5e5e7, alpha: 0.4, width: 0.5 })
 
   for (let x = 0; x <= width; x += gap) {
     grid.moveTo(x, 0)

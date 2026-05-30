@@ -47,8 +47,22 @@ export function drawEdges(
     curve.moveTo(from.x, from.y)
     curve.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, to.x, to.y)
 
+    // Draw arrowhead
+    const arrowSize = 8
+    const angle = Math.atan2(to.y - cp2y, to.x - cp2x)
+    const arrow1X = to.x - arrowSize * Math.cos(angle - Math.PI / 6)
+    const arrow1Y = to.y - arrowSize * Math.sin(angle - Math.PI / 6)
+    const arrow2X = to.x - arrowSize * Math.cos(angle + Math.PI / 6)
+    const arrow2Y = to.y - arrowSize * Math.sin(angle + Math.PI / 6)
+
+    curve.moveTo(to.x, to.y)
+    curve.lineTo(arrow1X, arrow1Y)
+    curve.moveTo(to.x, to.y)
+    curve.lineTo(arrow2X, arrow2Y)
+
+    // Hit area for edge selection
     const hit = new Graphics()
-    hit.stroke({ color: 0x000000, alpha: 0, width: 10 })
+    hit.stroke({ color: 0x000000, alpha: 0, width: 12 })
     hit.moveTo(from.x, from.y)
     hit.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, to.x, to.y)
     hit.label = edge.id

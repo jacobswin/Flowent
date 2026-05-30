@@ -112,7 +112,7 @@ function drawPorts(container: Container, node: GraphNode): void {
 
     portCircle.on('pointerover', () => {
       portCircle.clear()
-      portCircle.circle(x - node.x, y - node.y, portRadius)
+      portCircle.circle(x - node.x, y - node.y, portRadius + 1)
       portCircle.fill(0xffffff)
       portCircle.stroke({ color: portHoverColor, width: 2 })
     })

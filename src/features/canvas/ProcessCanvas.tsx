@@ -423,6 +423,22 @@ export function ProcessCanvas() {
         <span><kbd>L</kbd> Layout</span>
         <span><kbd>⌘Z</kbd> Undo</span>
         <span><kbd>Del</kbd> Delete</span>
+        <span><kbd>Space</kbd>+Drag Pan</span>
+        <span><kbd>+</kbd><kbd>-</kbd> Zoom</span>
+      </div>
+
+      <div className="status-bar" aria-live="polite">
+        <span>{canvas.nodes.length} nodes</span>
+        <span>·</span>
+        <span>{canvas.edges.length} edges</span>
+        <span>·</span>
+        <span>{Math.round(canvas.viewport.zoom * 100)}%</span>
+        {canvas.selectedNodeIds.size > 0 && (
+          <>
+            <span>·</span>
+            <span>{canvas.selectedNodeIds.size} selected</span>
+          </>
+        )}
       </div>
 
       <PropertiesPanel

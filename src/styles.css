@@ -270,6 +270,25 @@ textarea {
   pointer-events: none;
 }
 
+/* Status bar */
+.status-bar {
+  position: absolute;
+  bottom: 16px;
+  right: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
 .keyboard-hint kbd {
   display: inline-flex;
   align-items: center;

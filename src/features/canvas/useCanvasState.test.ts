@@ -40,29 +40,41 @@ describe('useCanvasState', () => {
   it('updates node data by id', () => {
     const { result } = renderHook(() => useCanvasState())
 
-    let createdId = ''
-
     act(() => {
       result.current.addActivity({ x: 120, y: 180 })
     })
-    createdId = result.current.selectedNodeId ?? ''
 
-    expect(createdId).toBeTruthy()
+    const createdNode = result.current.nodes.find((n) => n.data.kind === 'activity')
+    expect(createdNode).toBeTruthy()
 
     act(() => {
-      result.current.updateNodeData(createdId, {
+      result.current.updateNodeData(createdNode!.id, {
         title: 'Updated activity title',
         summary: 'Updated activity summary',
       })
     })
 
-    const updatedNode = result.current.nodes.find((n) => n.id === createdId)
-
+    const updatedNode = result.current.nodes.find((n) => n.id === createdNode!.id)
     expect(updatedNode?.data.kind).toBe('activity')
     if (updatedNode?.data.kind === 'activity') {
       expect(updatedNode.data.title).toBe('Updated activity title')
       expect(updatedNode.data.summary).toBe('Updated activity summary')
     }
+  })
+
+  it('selects multiple nodes with additive click', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addActivity({ x: 400, y: 100 }))
+
+    const ids = result.current.nodes.map((n) => n.id)
+
+    act(() => result.current.onNodeClick(ids[0], false))
+    expect(result.current.selectedNodeIds.size).toBe(1)
+
+    act(() => result.current.onNodeClick(ids[1], true))
+    expect(result.current.selectedNodeIds.size).toBe(2)
   })
 
   it('removes selected node and connected edges', () => {
@@ -72,13 +84,13 @@ describe('useCanvasState', () => {
       result.current.addActivity({ x: 100, y: 200 })
     })
 
-    const selectedId = result.current.selectedNodeId
-    expect(selectedId).toBeTruthy()
+    const selectedIds = Array.from(result.current.selectedNodeIds)
+    expect(selectedIds.length).toBe(1)
 
     act(() => {
       result.current.removeSelected()
     })
 
-    expect(result.current.nodes.find((n) => n.id === selectedId)).toBeUndefined()
+    expect(result.current.nodes.find((n) => n.id === selectedIds[0])).toBeUndefined()
   })
 })

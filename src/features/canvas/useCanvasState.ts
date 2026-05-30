@@ -1,20 +1,10 @@
 import { useCallback, useMemo, useState } from 'react'
-import {
-  applyEdgeChanges,
-  applyNodeChanges,
-  type Connection,
-  type EdgeChange,
-  type NodeChange,
-} from '@xyflow/react'
 import type {
-  ActivityNodeData,
-  DecisionNodeData,
   GraphCommand,
   GraphDocument,
   GraphNode,
   ProcessEdge,
   ProcessNode,
-  StartEndNodeData,
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
@@ -32,7 +22,7 @@ function toProcessNode(node: GraphNode): ProcessNode {
         summary: node.summary ?? '',
         roleIds: node.roleTags,
         kind: 'activity',
-      } satisfies ActivityNodeData,
+      },
     }
   }
 
@@ -45,7 +35,7 @@ function toProcessNode(node: GraphNode): ProcessNode {
         title: node.title,
         criteria: node.criteria ?? '',
         kind: 'decision',
-      } satisfies DecisionNodeData,
+      },
     }
   }
 
@@ -56,7 +46,7 @@ function toProcessNode(node: GraphNode): ProcessNode {
     data: {
       label: node.title,
       kind: node.type === 'start' ? 'start' : 'end',
-    } satisfies StartEndNodeData,
+    },
   }
 }
 
@@ -99,14 +89,19 @@ export function useCanvasState() {
   const [history, setHistory] = useState<HistoryState<GraphDocument>>(() =>
     createHistoryState(createInitialDocument()),
   )
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
 
   const document = history.present
 
   const nodes = useMemo(() => Array.from(document.nodes.values()).map(toProcessNode), [document])
   const edges = useMemo(() => Array.from(document.edges.values()).map(toProcessEdge), [document])
+  const selectedNodeIds = useMemo(() => document.selectedNodeIds, [document])
+  const selectedNode = useMemo(() => {
+    const ids = Array.from(selectedNodeIds)
+    if (ids.length === 1) return nodes.find((n) => n.id === ids[0]) ?? null
+    return null
+  }, [nodes, selectedNodeIds])
 
   const applyCommand = useCallback((command: GraphCommand) => {
     setHistory((current) => {
@@ -116,203 +111,177 @@ export function useCanvasState() {
   }, [])
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<ProcessNode>[]) => {
-      // keep compatibility with ReactFlow drag interactions
-      const nextNodes = applyNodeChanges(changes, nodes)
-      setHistory((current) => {
-        let next = current.present
-
-        for (const n of nextNodes) {
-          const existing = next.nodes.get(n.id)
-          if (!existing) continue
-          next = runCommand(next, {
-            type: 'UpdateNode',
-            payload: {
-              id: n.id,
-              patch: {
-                x: n.position.x,
-                y: n.position.y,
-              },
-            },
-          })
-        }
-
-        if (next === current.present) return current
-        return pushHistory(current, next)
-      })
+    () => {
+      // No-op for now - we handle node movement via Pixi events
     },
-    [nodes],
+    [],
   )
 
   const onEdgesChange = useCallback(
-    (changes: EdgeChange<ProcessEdge>[]) => {
-      // For now only support remove changes from ReactFlow edge interactions.
-      const nextEdges = applyEdgeChanges(changes, edges)
-      setHistory((current) => {
-        const nextMap = new Map<string, { id: string; sourceNodeId: string; sourcePortId: string; targetNodeId: string; targetPortId: string; label: string }>()
-        for (const e of nextEdges) {
-          nextMap.set(e.id, {
-            id: e.id,
-            sourceNodeId: e.source,
-            sourcePortId: 'out',
-            targetNodeId: e.target,
-            targetPortId: 'in',
-            label: e.data?.label ?? '',
-          })
-        }
-
-        const nextDoc: GraphDocument = {
-          ...current.present,
-          edges: nextMap,
-          meta: {
-            dirty: true,
-            version: current.present.meta.version + 1,
-          },
-        }
-
-        return pushHistory(current, nextDoc)
-      })
+    () => {
+      // No-op for now
     },
-    [edges],
+    [],
   )
 
   const onConnect = useCallback(
-    (connection: Connection) => {
-      if (!connection.source || !connection.target) return
-
+    (source: string, target: string) => {
       const edgeId = `edge-${Date.now()}`
       applyCommand({
         type: 'AddEdge',
         payload: {
           id: edgeId,
-          sourceNodeId: connection.source,
-          sourcePortId: connection.sourceHandle ?? 'out',
-          targetNodeId: connection.target,
-          targetPortId: connection.targetHandle ?? 'in',
+          sourceNodeId: source,
+          sourcePortId: 'out',
+          targetNodeId: target,
+          targetPortId: 'in',
           label: '',
         },
       })
-      setSelectedEdgeId(edgeId)
-      setSelectedNodeId(null)
     },
     [applyCommand],
   )
 
+  const onNodeClick = useCallback(
+    (nodeId: string, additive: boolean) => {
+      applyCommand({
+        type: 'SelectNode',
+        payload: { id: nodeId, additive },
+      })
+    },
+    [applyCommand],
+  )
+
+  const onEdgeClick = useCallback(() => {
+    // No-op for now
+  }, [])
+
+  const onPaneClick = useCallback(() => {
+    setHistory((current) => ({
+      ...current,
+      present: {
+        ...current.present,
+        selectedNodeIds: new Set(),
+        selectedEdgeIds: new Set(),
+        meta: { dirty: true, version: current.present.meta.version + 1 },
+      },
+    }))
+    setEditorNodeId(null)
+  }, [])
+
   const openEditor = useCallback((nodeId: string) => {
     setEditorNodeId(nodeId)
-    setSelectedNodeId(nodeId)
-    setSelectedEdgeId(null)
   }, [])
 
   const closeEditor = useCallback(() => {
     setEditorNodeId(null)
   }, [])
 
-  const onNodeClick = useCallback((_event: React.MouseEvent, node: ProcessNode) => {
-    setSelectedNodeId(node.id)
-    setSelectedEdgeId(null)
-  }, [])
-
-  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: ProcessEdge) => {
-    setSelectedEdgeId(edge.id)
-    setSelectedNodeId(null)
-  }, [])
-
-  const onPaneClick = useCallback(() => {
-    setSelectedNodeId(null)
-    setSelectedEdgeId(null)
-    setEditorNodeId(null)
-  }, [])
-
   const addActivity = useCallback(
     (position?: { x: number; y: number }) => {
       const id = `activity-${Date.now()}`
-      applyCommand({
-        type: 'AddNode',
-        payload: {
-          id,
-          type: 'activity',
-          x: position?.x ?? 300,
-          y: position?.y ?? 220,
-          width: 220,
-          height: 96,
-          title: 'New activity',
-          summary: '',
-          roleTags: [],
-          ports: [
-            { id: 'in', side: 'top' },
-            { id: 'out', side: 'bottom' },
-          ],
-        },
+      setHistory((current) => {
+        let next = runCommand(current.present, {
+          type: 'AddNode',
+          payload: {
+            id,
+            type: 'activity',
+            x: position?.x ?? 300,
+            y: position?.y ?? 220,
+            width: 220,
+            height: 96,
+            title: 'New activity',
+            summary: '',
+            roleTags: [],
+            ports: [
+              { id: 'in', side: 'top' },
+              { id: 'out', side: 'bottom' },
+            ],
+          },
+        })
+        next = runCommand(next, {
+          type: 'SelectNode',
+          payload: { id, additive: false },
+        })
+        return pushHistory(current, next)
       })
-      setSelectedNodeId(id)
-      setSelectedEdgeId(null)
     },
-    [applyCommand],
+    [],
   )
 
   const addDecision = useCallback(
     (position?: { x: number; y: number }) => {
       const id = `decision-${Date.now()}`
-      applyCommand({
-        type: 'AddNode',
-        payload: {
-          id,
-          type: 'decision',
-          x: position?.x ?? 460,
-          y: position?.y ?? 320,
-          width: 180,
-          height: 108,
-          title: 'New decision',
-          criteria: '',
-          roleTags: [],
-          ports: [
-            { id: 'in', side: 'top' },
-            { id: 'yes', side: 'bottom' },
-            { id: 'no', side: 'right' },
-          ],
-        },
+      setHistory((current) => {
+        let next = runCommand(current.present, {
+          type: 'AddNode',
+          payload: {
+            id,
+            type: 'decision',
+            x: position?.x ?? 460,
+            y: position?.y ?? 320,
+            width: 180,
+            height: 108,
+            title: 'New decision',
+            criteria: '',
+            roleTags: [],
+            ports: [
+              { id: 'in', side: 'top' },
+              { id: 'yes', side: 'bottom' },
+              { id: 'no', side: 'right' },
+            ],
+          },
+        })
+        next = runCommand(next, {
+          type: 'SelectNode',
+          payload: { id, additive: false },
+        })
+        return pushHistory(current, next)
       })
-      setSelectedNodeId(id)
-      setSelectedEdgeId(null)
     },
-    [applyCommand],
+    [],
   )
 
   const addEnd = useCallback(
     (position?: { x: number; y: number }) => {
       const id = `end-${Date.now()}`
-      applyCommand({
-        type: 'AddNode',
-        payload: {
-          id,
-          type: 'end',
-          x: position?.x ?? 400,
-          y: position?.y ?? 620,
-          width: 120,
-          height: 56,
-          title: 'End',
-          roleTags: [],
-          ports: [{ id: 'in', side: 'top' }],
-        },
+      setHistory((current) => {
+        let next = runCommand(current.present, {
+          type: 'AddNode',
+          payload: {
+            id,
+            type: 'end',
+            x: position?.x ?? 400,
+            y: position?.y ?? 620,
+            width: 120,
+            height: 56,
+            title: 'End',
+            roleTags: [],
+            ports: [{ id: 'in', side: 'top' }],
+          },
+        })
+        next = runCommand(next, {
+          type: 'SelectNode',
+          payload: { id, additive: false },
+        })
+        return pushHistory(current, next)
       })
-      setSelectedNodeId(id)
-      setSelectedEdgeId(null)
     },
-    [applyCommand],
+    [],
   )
 
   const removeSelected = useCallback(() => {
     setHistory((current) => {
       let next = current.present
 
-      if (selectedNodeId && selectedNodeId !== 'start') {
+      for (const nodeId of next.selectedNodeIds) {
+        if (nodeId === 'start') continue
         const nodes = new Map(next.nodes)
-        nodes.delete(selectedNodeId)
+        nodes.delete(nodeId)
 
         const edges = new Map(next.edges)
         for (const [id, edge] of edges.entries()) {
-          if (edge.sourceNodeId === selectedNodeId || edge.targetNodeId === selectedNodeId) {
+          if (edge.sourceNodeId === nodeId || edge.targetNodeId === nodeId) {
             edges.delete(id)
           }
         }
@@ -325,9 +294,9 @@ export function useCanvasState() {
         }
       }
 
-      if (selectedEdgeId) {
+      for (const edgeId of next.selectedEdgeIds) {
         const edges = new Map(next.edges)
-        edges.delete(selectedEdgeId)
+        edges.delete(edgeId)
         next = {
           ...next,
           edges,
@@ -336,12 +305,13 @@ export function useCanvasState() {
       }
 
       if (next === current.present) return current
-      return pushHistory(current, next)
+      return pushHistory(current, {
+        ...next,
+        selectedNodeIds: new Set(),
+        selectedEdgeIds: new Set(),
+      })
     })
-
-    setSelectedNodeId(null)
-    setSelectedEdgeId(null)
-  }, [selectedNodeId, selectedEdgeId])
+  }, [])
 
   const updateNodeData = useCallback(
     (nodeId: string, data: NodeDataPatch) => {
@@ -361,16 +331,27 @@ export function useCanvasState() {
     [applyCommand],
   )
 
+  const moveSelectedNodes = useCallback(
+    (dx: number, dy: number) => {
+      const ids = Array.from(document.selectedNodeIds)
+      if (ids.length === 0) return
+
+      applyCommand({
+        type: 'MoveNodes',
+        payload: { ids, dx, dy },
+      })
+    },
+    [document.selectedNodeIds, applyCommand],
+  )
+
   const undoAction = useCallback(() => {
     setHistory((current) => undo(current))
-    setSelectedNodeId(null)
-    setSelectedEdgeId(null)
+    setEditorNodeId(null)
   }, [])
 
   const redoAction = useCallback(() => {
     setHistory((current) => redo(current))
-    setSelectedNodeId(null)
-    setSelectedEdgeId(null)
+    setEditorNodeId(null)
   }, [])
 
   const autoLayout = useCallback(async () => {
@@ -398,32 +379,32 @@ export function useCanvasState() {
     })
   }, [document])
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null
-  const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null
   const editorNode = nodes.find((n) => n.id === editorNodeId) ?? null
 
   return {
     nodes,
     edges,
     selectedNode,
-    selectedEdge,
-    selectedNodeId,
-    selectedEdgeId,
+    selectedNodeIds,
     editorNode,
-    editorNodeId,
-    openEditor,
-    closeEditor,
+    marquee,
+    startMarquee: useCallback((x: number, y: number) => setMarquee({ x1: x, y1: y, x2: x, y2: y }), []),
+    updateMarquee: useCallback((x: number, y: number) => setMarquee((c) => c ? { ...c, x2: x, y2: y } : null), []),
+    endMarquee: useCallback(() => setMarquee(null), []),
     onNodesChange,
     onEdgesChange,
     onConnect,
     onNodeClick,
     onEdgeClick,
     onPaneClick,
+    openEditor,
+    closeEditor,
     addActivity,
     addDecision,
     addEnd,
     removeSelected,
     updateNodeData,
+    moveSelectedNodes,
     undo: undoAction,
     redo: redoAction,
     autoLayout,

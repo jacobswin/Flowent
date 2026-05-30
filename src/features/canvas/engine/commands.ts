@@ -30,6 +30,50 @@ export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocu
         },
       }
     }
+    case 'SelectNode': {
+      const selectedNodeIds = new Set(doc.selectedNodeIds)
+      if (command.payload.additive) {
+        if (selectedNodeIds.has(command.payload.id)) {
+          selectedNodeIds.delete(command.payload.id)
+        } else {
+          selectedNodeIds.add(command.payload.id)
+        }
+      } else {
+        selectedNodeIds.clear()
+        selectedNodeIds.add(command.payload.id)
+      }
+
+      return {
+        ...doc,
+        selectedNodeIds,
+        meta: {
+          dirty: true,
+          version: doc.meta.version + 1,
+        },
+      }
+    }
+    case 'MoveNodes': {
+      const nodes = new Map(doc.nodes)
+      for (const id of command.payload.ids) {
+        const node = nodes.get(id)
+        if (node) {
+          nodes.set(id, {
+            ...node,
+            x: node.x + command.payload.dx,
+            y: node.y + command.payload.dy,
+          })
+        }
+      }
+
+      return {
+        ...doc,
+        nodes,
+        meta: {
+          dirty: true,
+          version: doc.meta.version + 1,
+        },
+      }
+    }
     default:
       return doc
   }

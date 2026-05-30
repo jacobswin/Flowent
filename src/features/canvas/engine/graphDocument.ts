@@ -5,7 +5,8 @@ export function createEmptyDocument(id: string): GraphDocument {
     id,
     nodes: new Map(),
     edges: new Map(),
-    selection: new Set(),
+    selectedNodeIds: new Set(),
+    selectedEdgeIds: new Set(),
     viewport: { x: 0, y: 0, zoom: 1 },
     meta: { dirty: false, version: 1 },
   }

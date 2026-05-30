@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { FederatedPointerEvent } from 'pixi.js'
+import type { ProcessNode } from './canvasTypes'
 import { Toolbar } from './Toolbar'
 import { PropertiesPanel } from './PropertiesPanel'
 import { useCanvasState } from './useCanvasState'
@@ -58,16 +59,11 @@ export function ProcessCanvas() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
-  const nodesById = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof toGraphNode>>()
-    for (const node of canvas.nodes) {
-      const graphNode = toGraphNode(node)
-      map.set(graphNode.id, graphNode)
-    }
-    return map
-  }, [canvas.nodes])
+  const graphNodes = useMemo(
+    () => canvas.nodes.map(toGraphNode),
+    [canvas.nodes],
+  )
 
-  const graphNodes = useMemo(() => Array.from(nodesById.values()), [nodesById])
   const graphEdges = useMemo(
     () =>
       canvas.edges
@@ -82,6 +78,14 @@ export function ProcessCanvas() {
         })),
     [canvas.edges],
   )
+
+  const nodesById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof toGraphNode>>()
+    for (const node of graphNodes) {
+      map.set(node.id, node)
+    }
+    return map
+  }, [graphNodes])
 
   useEffect(() => {
     const host = hostRef.current
@@ -101,16 +105,76 @@ export function ProcessCanvas() {
 
       const layers = createCanvasLayers(stage.root)
 
+      let lastClickTime = 0
+      let lastClickNodeId: string | null = null
+
       const redraw = () => {
         const width = host.clientWidth
         const height = host.clientHeight
 
         drawGrid(layers.gridLayer, width, height)
-        drawEdges(layers.edgeLayer, graphEdges, nodesById, canvas.selectedEdgeId)
-        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeId)
+        drawEdges(layers.edgeLayer, graphEdges, nodesById, null)
+        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
 
-        attachNodeEvents(layers.nodeLayer, canvas)
-        attachEdgeEvents(layers.edgeLayer, canvas)
+        // Attach events to nodes
+        for (const child of layers.nodeLayer.children) {
+          const nodeId = (child as { label?: string }).label
+          if (!nodeId) continue
+
+          // Remove existing listeners to avoid duplicates
+          child.removeAllListeners()
+
+          // Single click - select
+          child.on('pointertap', (event: FederatedPointerEvent) => {
+            const now = Date.now()
+            const timeSinceLastClick = now - lastClickTime
+            const isSameNode = lastClickNodeId === nodeId
+
+            if (timeSinceLastClick < 300 && isSameNode) {
+              // Double click - open editor
+              canvas.openEditor(nodeId)
+            } else {
+              // Single click - select
+              const additive = event.shiftKey || event.ctrlKey || event.metaKey
+              canvas.onNodeClick(nodeId, additive)
+            }
+
+            lastClickTime = now
+            lastClickNodeId = nodeId
+          })
+
+          // Drag support
+          let dragging = false
+          let startX = 0
+          let startY = 0
+
+          child.on('pointerdown', (event: FederatedPointerEvent) => {
+            dragging = true
+            startX = event.globalX
+            startY = event.globalY
+          })
+
+          child.on('globalpointermove', (event: FederatedPointerEvent) => {
+            if (!dragging) return
+
+            const dx = event.globalX - startX
+            const dy = event.globalY - startY
+
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+              canvas.moveSelectedNodes(dx, dy)
+              startX = event.globalX
+              startY = event.globalY
+            }
+          })
+
+          child.on('pointerup', () => {
+            dragging = false
+          })
+
+          child.on('pointerupoutside', () => {
+            dragging = false
+          })
+        }
       }
 
       redraw()
@@ -152,7 +216,7 @@ export function ProcessCanvas() {
         onAddEnd={canvas.addEnd}
         onRemove={canvas.removeSelected}
         onAutoLayout={() => canvas.autoLayout()}
-        hasSelection={Boolean(canvas.selectedNodeId || canvas.selectedEdgeId)}
+        hasSelection={canvas.selectedNodeIds.size > 0}
       />
 
       <div ref={hostRef} className="pixi-host" aria-label="Process canvas" />
@@ -167,7 +231,7 @@ export function ProcessCanvas() {
 
       <PropertiesPanel
         node={canvas.editorNode}
-        edge={canvas.selectedEdge}
+        edge={null}
         onUpdateNode={canvas.updateNodeData}
         onClose={() => canvas.closeEditor()}
       />
@@ -175,63 +239,7 @@ export function ProcessCanvas() {
   )
 }
 
-function attachNodeEvents(
-  nodeLayer: {
-    children: Array<{
-      label?: string
-      on?: (event: string, handler: (event: FederatedPointerEvent) => void) => void
-    }>
-  },
-  canvas: ReturnType<typeof useCanvasState>,
-): void {
-  for (const child of nodeLayer.children) {
-    if (!child.label || !child.on) continue
-
-    child.on('pointertap', () => {
-      const node = canvas.nodes.find((n) => n.id === child.label)
-      if (node) {
-        canvas.onNodeClick({} as React.MouseEvent, node)
-      }
-    })
-
-    child.on('pointerdown', () => {
-      const node = canvas.nodes.find((n) => n.id === child.label)
-      if (node) {
-        canvas.onNodeClick({} as React.MouseEvent, node)
-      }
-    })
-
-    child.on('doubleclick', () => {
-      const node = canvas.nodes.find((n) => n.id === child.label)
-      if (node) {
-        canvas.openEditor(node.id)
-      }
-    })
-  }
-}
-
-function attachEdgeEvents(
-  edgeLayer: {
-    children: Array<{
-      label?: string
-      on?: (event: string, handler: (event: FederatedPointerEvent) => void) => void
-    }>
-  },
-  canvas: ReturnType<typeof useCanvasState>,
-): void {
-  for (const child of edgeLayer.children) {
-    if (!child.label || !child.on) continue
-
-    child.on('pointertap', () => {
-      const edge = canvas.edges.find((e) => e.id === child.label)
-      if (edge) {
-        canvas.onEdgeClick({} as React.MouseEvent, edge)
-      }
-    })
-  }
-}
-
-function toGraphNode(node: ReturnType<typeof useCanvasState>['nodes'][number]) {
+function toGraphNode(node: ProcessNode) {
   if (node.data.kind === 'activity') {
     return {
       id: node.id,

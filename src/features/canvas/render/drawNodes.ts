@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphNode } from '../canvasTypes'
 
-export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeId: string | null): void {
+export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds: Set<string>): void {
   layer.removeChildren()
 
   for (const node of nodes) {
@@ -9,7 +9,7 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeId: 
     container.x = node.x
     container.y = node.y
 
-    const selected = selectedNodeId === node.id
+    const selected = selectedNodeIds.has(node.id)
 
     const shape = new Graphics()
 

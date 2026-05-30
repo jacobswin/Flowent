@@ -42,7 +42,8 @@ export type GraphDocument = {
   id: string
   nodes: Map<string, GraphNode>
   edges: Map<string, GraphEdge>
-  selection: Set<string>
+  selectedNodeIds: Set<string>
+  selectedEdgeIds: Set<string>
   viewport: GraphViewport
   meta: {
     dirty: boolean
@@ -59,6 +60,14 @@ export type GraphCommand =
         id: string
         patch: Partial<Pick<GraphNode, 'title' | 'summary' | 'criteria' | 'roleTags' | 'x' | 'y'>>
       }
+    }
+  | {
+      type: 'SelectNode'
+      payload: { id: string; additive: boolean }
+    }
+  | {
+      type: 'MoveNodes'
+      payload: { ids: string[]; dx: number; dy: number }
     }
 
 export type ActivityNodeData = {

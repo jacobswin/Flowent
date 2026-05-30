@@ -379,6 +379,33 @@ export function useCanvasState() {
     })
   }, [document])
 
+  const selectNodesInRect = useCallback(
+    (x1: number, y1: number, x2: number, y2: number) => {
+      setHistory((current) => {
+        const selectedNodeIds = new Set<string>()
+        for (const node of current.present.nodes.values()) {
+          if (
+            node.x + node.width >= x1 &&
+            node.x <= x2 &&
+            node.y + node.height >= y1 &&
+            node.y <= y2
+          ) {
+            selectedNodeIds.add(node.id)
+          }
+        }
+
+        if (selectedNodeIds.size === 0) return current
+
+        return pushHistory(current, {
+          ...current.present,
+          selectedNodeIds,
+          meta: { dirty: true, version: current.present.meta.version + 1 },
+        })
+      })
+    },
+    [],
+  )
+
   const editorNode = nodes.find((n) => n.id === editorNodeId) ?? null
 
   return {
@@ -391,6 +418,7 @@ export function useCanvasState() {
     startMarquee: useCallback((x: number, y: number) => setMarquee({ x1: x, y1: y, x2: x, y2: y }), []),
     updateMarquee: useCallback((x: number, y: number) => setMarquee((c) => c ? { ...c, x2: x, y2: y } : null), []),
     endMarquee: useCallback(() => setMarquee(null), []),
+    selectNodesInRect,
     onNodesChange,
     onEdgesChange,
     onConnect,

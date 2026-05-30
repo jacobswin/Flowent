@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { FederatedPointerEvent } from 'pixi.js'
+import { Graphics } from 'pixi.js'
 import type { ProcessNode } from './canvasTypes'
 import { Toolbar } from './Toolbar'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -107,10 +108,75 @@ export function ProcessCanvas() {
 
       let lastClickTime = 0
       let lastClickNodeId: string | null = null
+      let isMarqueeDragging = false
+      let marqueeStartX = 0
+      let marqueeStartY = 0
+
+      // Marquee rectangle graphics
+      const marqueeRect = new Graphics()
+      marqueeRect.visible = false
+      layers.overlayLayer.addChild(marqueeRect)
+
+      // Handle marquee on canvas background
+      const hitArea = new Graphics()
+      hitArea.rect(0, 0, host.clientWidth, host.clientHeight)
+      hitArea.fill({ color: 0x000000, alpha: 0.001 }) // Nearly invisible hit area
+      hitArea.eventMode = 'static'
+      hitArea.cursor = 'default'
+      layers.overlayLayer.addChild(hitArea)
+
+      hitArea.on('pointerdown', (event: FederatedPointerEvent) => {
+        isMarqueeDragging = true
+        marqueeStartX = event.globalX
+        marqueeStartY = event.globalY
+        marqueeRect.visible = true
+        canvas.onPaneClick()
+      })
+
+      hitArea.on('globalpointermove', (event: FederatedPointerEvent) => {
+        if (!isMarqueeDragging) return
+
+        const x1 = Math.min(marqueeStartX, event.globalX)
+        const y1 = Math.min(marqueeStartY, event.globalY)
+        const x2 = Math.max(marqueeStartX, event.globalX)
+        const y2 = Math.max(marqueeStartY, event.globalY)
+
+        marqueeRect.clear()
+        marqueeRect.rect(x1, y1, x2 - x1, y2 - y1)
+        marqueeRect.fill({ color: 0x0071e3, alpha: 0.1 })
+        marqueeRect.stroke({ color: 0x0071e3, alpha: 0.4, width: 1 })
+      })
+
+      hitArea.on('pointerup', (event: FederatedPointerEvent) => {
+        if (!isMarqueeDragging) return
+        isMarqueeDragging = false
+        marqueeRect.visible = false
+
+        const x1 = Math.min(marqueeStartX, event.globalX)
+        const y1 = Math.min(marqueeStartY, event.globalY)
+        const x2 = Math.max(marqueeStartX, event.globalX)
+        const y2 = Math.max(marqueeStartY, event.globalY)
+
+        // Only marquee if dragged more than 5px
+        if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) return
+
+        // Select nodes within marquee
+        canvas.selectNodesInRect(x1, y1, x2, y2)
+      })
+
+      hitArea.on('pointerupoutside', () => {
+        isMarqueeDragging = false
+        marqueeRect.visible = false
+      })
 
       const redraw = () => {
         const width = host.clientWidth
         const height = host.clientHeight
+
+        // Update hit area size
+        hitArea.clear()
+        hitArea.rect(0, 0, width, height)
+        hitArea.fill({ color: 0x000000, alpha: 0.001 })
 
         drawGrid(layers.gridLayer, width, height)
         drawEdges(layers.edgeLayer, graphEdges, nodesById, null)

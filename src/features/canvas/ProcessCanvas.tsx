@@ -182,34 +182,107 @@ export function ProcessCanvas() {
         drawEdges(layers.edgeLayer, graphEdges, nodesById, null)
         drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
 
-        // Attach events to nodes
+        // Attach events to nodes and ports
         for (const child of layers.nodeLayer.children) {
-          const nodeId = (child as { label?: string }).label
-          if (!nodeId) continue
+          const label = (child as { label?: string }).label
+          if (!label) continue
 
           // Remove existing listeners to avoid duplicates
           child.removeAllListeners()
 
-          // Single click - select
+          // Check if this is a port
+          if (label.startsWith('port:')) {
+            let portDragging = false
+            let portStartX = 0
+            let portStartY = 0
+            let sourceNodeId = ''
+
+            // Find parent node
+            const parent = child.parent
+            if (parent && 'label' in parent) {
+              sourceNodeId = (parent as { label: string }).label
+            }
+
+            child.on('pointerdown', (event: FederatedPointerEvent) => {
+              portDragging = true
+              portStartX = event.globalX
+              portStartY = event.globalY
+            })
+
+            child.on('globalpointermove', (event: FederatedPointerEvent) => {
+              if (!portDragging) return
+
+              // Draw temporary connection line
+              layers.overlayLayer.children.forEach((c) => {
+                if ((c as { label?: string }).label === 'temp-connection') {
+                  layers.overlayLayer.removeChild(c)
+                }
+              })
+
+              const tempLine = new Graphics()
+              tempLine.label = 'temp-connection'
+              tempLine.stroke({ color: 0x0071e3, width: 2, alpha: 0.6 })
+              tempLine.moveTo(portStartX, portStartY)
+              tempLine.lineTo(event.globalX, event.globalY)
+              layers.overlayLayer.addChild(tempLine)
+            })
+
+            child.on('pointerup', (event: FederatedPointerEvent) => {
+              if (!portDragging) return
+              portDragging = false
+
+              // Remove temporary line
+              layers.overlayLayer.children.forEach((c) => {
+                if ((c as { label?: string }).label === 'temp-connection') {
+                  layers.overlayLayer.removeChild(c)
+                }
+              })
+
+              // Find target node under cursor
+              const targetNode = findNodeAtPosition(
+                event.globalX,
+                event.globalY,
+                graphNodes,
+                sourceNodeId,
+              )
+
+              if (targetNode) {
+                canvas.onConnect(sourceNodeId, targetNode.id)
+              }
+            })
+
+            child.on('pointerupoutside', () => {
+              portDragging = false
+              layers.overlayLayer.children.forEach((c) => {
+                if ((c as { label?: string }).label === 'temp-connection') {
+                  layers.overlayLayer.removeChild(c)
+                }
+              })
+            })
+
+            continue
+          }
+
+          // Node event handling
           child.on('pointertap', (event: FederatedPointerEvent) => {
             const now = Date.now()
             const timeSinceLastClick = now - lastClickTime
-            const isSameNode = lastClickNodeId === nodeId
+            const isSameNode = lastClickNodeId === label
 
             if (timeSinceLastClick < 300 && isSameNode) {
               // Double click - open editor
-              canvas.openEditor(nodeId)
+              canvas.openEditor(label)
             } else {
               // Single click - select
               const additive = event.shiftKey || event.ctrlKey || event.metaKey
-              canvas.onNodeClick(nodeId, additive)
+              canvas.onNodeClick(label, additive)
             }
 
             lastClickTime = now
-            lastClickNodeId = nodeId
+            lastClickNodeId = label
           })
 
-          // Drag support
+          // Drag support for node
           let dragging = false
           let startX = 0
           let startY = 0
@@ -303,6 +376,26 @@ export function ProcessCanvas() {
       />
     </div>
   )
+}
+
+function findNodeAtPosition(
+  x: number,
+  y: number,
+  nodes: ReturnType<typeof toGraphNode>[],
+  excludeNodeId: string,
+): ReturnType<typeof toGraphNode> | null {
+  for (const node of nodes) {
+    if (node.id === excludeNodeId) continue
+    if (
+      x >= node.x &&
+      x <= node.x + node.width &&
+      y >= node.y &&
+      y <= node.y + node.height
+    ) {
+      return node
+    }
+  }
+  return null
 }
 
 function toGraphNode(node: ProcessNode) {

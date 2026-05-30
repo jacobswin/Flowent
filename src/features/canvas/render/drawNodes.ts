@@ -34,12 +34,12 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds:
     }
 
     const title = new Text({
-      text: node.type === 'start' || node.type === 'end' ? node.title : node.title,
+      text: node.title,
       style: {
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", sans-serif',
         fontSize: node.type === 'start' || node.type === 'end' ? 12 : 15,
-        fontWeight: node.type === 'start' || node.type === 'end' ? '600' : '600',
+        fontWeight: '600',
         fill: node.type === 'start' ? 0xf5f5f7 : 0x1d1d1f,
       },
     })
@@ -80,10 +80,67 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds:
       container.addChild(roles)
     }
 
+    // Draw connection ports
+    drawPorts(container, node)
+
     ;(container as Container & { eventMode?: string; cursor?: string }).eventMode = 'static'
     ;(container as Container & { eventMode?: string; cursor?: string }).cursor = 'pointer'
     container.label = node.id
 
     layer.addChild(container)
+  }
+}
+
+function drawPorts(container: Container, node: GraphNode): void {
+  const portRadius = 5
+  const portColor = 0xc4c4c6
+  const portHoverColor = 0x0071e3
+
+  const ports = node.ports
+
+  for (const port of ports) {
+    const { x, y } = getPortPosition(node, port.id)
+    const portCircle = new Graphics()
+
+    portCircle.circle(x - node.x, y - node.y, portRadius)
+    portCircle.fill(0xffffff)
+    portCircle.stroke({ color: portColor, width: 1.5 })
+
+    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).eventMode = 'static'
+    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).cursor = 'crosshair'
+    ;(portCircle as Graphics & { eventMode?: string; cursor?: string; label?: string }).label = `port:${port.id}`
+
+    portCircle.on('pointerover', () => {
+      portCircle.clear()
+      portCircle.circle(x - node.x, y - node.y, portRadius)
+      portCircle.fill(0xffffff)
+      portCircle.stroke({ color: portHoverColor, width: 2 })
+    })
+
+    portCircle.on('pointerout', () => {
+      portCircle.clear()
+      portCircle.circle(x - node.x, y - node.y, portRadius)
+      portCircle.fill(0xffffff)
+      portCircle.stroke({ color: portColor, width: 1.5 })
+    })
+
+    container.addChild(portCircle)
+  }
+}
+
+function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {
+  const port = node.ports.find((p) => p.id === portId)
+  const side = port?.side ?? 'bottom'
+
+  switch (side) {
+    case 'top':
+      return { x: node.x + node.width / 2, y: node.y }
+    case 'right':
+      return { x: node.x + node.width, y: node.y + node.height / 2 }
+    case 'left':
+      return { x: node.x, y: node.y + node.height / 2 }
+    case 'bottom':
+    default:
+      return { x: node.x + node.width / 2, y: node.y + node.height }
   }
 }

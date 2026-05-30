@@ -6,10 +6,25 @@ interface ToolbarProps {
   onAddEnd: ReturnType<typeof useCanvasState>['addEnd']
   onRemove: ReturnType<typeof useCanvasState>['removeSelected']
   onAutoLayout: () => void
+  onUndo: () => void
+  onRedo: () => void
+  canUndo: boolean
+  canRedo: boolean
   hasSelection: boolean
 }
 
-export function Toolbar({ onAddActivity, onAddDecision, onAddEnd, onRemove, onAutoLayout, hasSelection }: ToolbarProps) {
+export function Toolbar({
+  onAddActivity,
+  onAddDecision,
+  onAddEnd,
+  onRemove,
+  onAutoLayout,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  hasSelection,
+}: ToolbarProps) {
   return (
     <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
       <button
@@ -62,6 +77,31 @@ export function Toolbar({ onAddActivity, onAddDecision, onAddEnd, onRemove, onAu
           <path d="M7 7v4h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span>Layout</span>
+      </button>
+      <div className="toolbar-divider" />
+      <button
+        type="button"
+        className="toolbar-button"
+        onClick={onUndo}
+        disabled={!canUndo}
+        title="Undo"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M4 7h7a4 4 0 110 8H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M7 4L4 7l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="toolbar-button"
+        onClick={onRedo}
+        disabled={!canRedo}
+        title="Redo"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M14 7H7a4 4 0 100 8h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M11 4l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
       {hasSelection && (
         <>

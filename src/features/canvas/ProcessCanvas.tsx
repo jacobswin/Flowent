@@ -412,6 +412,10 @@ export function ProcessCanvas() {
         onAddEnd={canvas.addEnd}
         onRemove={canvas.removeSelected}
         onAutoLayout={() => canvas.autoLayout()}
+        onUndo={canvas.undo}
+        onRedo={canvas.redo}
+        canUndo={canvas.canUndo}
+        canRedo={canvas.canRedo}
         hasSelection={canvas.selectedNodeIds.size > 0}
       />
 

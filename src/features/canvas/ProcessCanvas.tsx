@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { FederatedPointerEvent } from 'pixi.js'
 import { Toolbar } from './Toolbar'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -7,10 +7,56 @@ import { createPixiStage } from './render/pixiStage'
 import { createCanvasLayers, drawGrid } from './render/layers'
 import { drawNodes } from './render/drawNodes'
 import { drawEdges } from './render/drawEdges'
+import { mapKeyToAction } from './engine/keyboard'
 
 export function ProcessCanvas() {
   const canvas = useCanvasState()
   const hostRef = useRef<HTMLDivElement | null>(null)
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      const action = mapKeyToAction({
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+      })
+
+      if (!action) return
+
+      event.preventDefault()
+
+      switch (action) {
+        case 'tool-activity':
+          canvas.addActivity()
+          break
+        case 'tool-decision':
+          canvas.addDecision()
+          break
+        case 'tool-start-end':
+          canvas.addEnd()
+          break
+        case 'auto-layout':
+          canvas.autoLayout()
+          break
+        case 'undo':
+          canvas.undo()
+          break
+        case 'redo':
+          canvas.redo()
+          break
+        case 'delete':
+          canvas.removeSelected()
+          break
+      }
+    },
+    [canvas],
+  )
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
 
   const nodesById = useMemo(() => {
     const map = new Map<string, ReturnType<typeof toGraphNode>>()
@@ -110,6 +156,14 @@ export function ProcessCanvas() {
       />
 
       <div ref={hostRef} className="pixi-host" aria-label="Process canvas" />
+
+      <div className="keyboard-hint" aria-hidden="true">
+        <span><kbd>A</kbd> Activity</span>
+        <span><kbd>D</kbd> Decision</span>
+        <span><kbd>L</kbd> Layout</span>
+        <span><kbd>⌘Z</kbd> Undo</span>
+        <span><kbd>Del</kbd> Delete</span>
+      </div>
 
       <PropertiesPanel
         node={canvas.editorNode}

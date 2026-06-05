@@ -27,6 +27,14 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds:
       shape.closePath()
       shape.fill(0xffffff)
       shape.stroke({ color: selected ? 0x0071e3 : 0xc4c4c6, width: selected ? 2 : 1.5 })
+    } else if (node.type === 'stage') {
+      shape.roundRect(0, 0, node.width, node.height, 22)
+      shape.fill(0xf8fafc)
+      shape.stroke({ color: selected ? 0x2563eb : 0x94a3b8, width: selected ? 2.5 : 1.6 })
+    } else if (node.type === 'bottleneck') {
+      shape.roundRect(0, 0, node.width, node.height, 18)
+      shape.fill(0xfff7ed)
+      shape.stroke({ color: selected ? 0x2563eb : 0xea580c, width: selected ? 2.5 : 1.6 })
     } else {
       shape.roundRect(0, 0, node.width, node.height, 12)
       shape.fill(0xffffff)
@@ -78,6 +86,37 @@ export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds:
       roles.x = 14
       roles.y = Math.min(node.height - 20, 58)
       container.addChild(roles)
+    }
+
+    if (node.owner && (node.type === 'stage' || node.type === 'decision')) {
+      const owner = new Text({
+        text: `Owner: ${node.owner}`,
+        style: {
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+          fontSize: 11,
+          fill: 0x64748b,
+        },
+      })
+      owner.x = 14
+      owner.y = 38
+      container.addChild(owner)
+    }
+
+    if (node.reviewStatus && node.type === 'bottleneck') {
+      const status = new Text({
+        text: node.reviewStatus,
+        style: {
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+          fontSize: 11,
+          fontWeight: '600',
+          fill: 0xc2410c,
+        },
+      })
+      status.x = 14
+      status.y = 38
+      container.addChild(status)
     }
 
     // Draw connection ports

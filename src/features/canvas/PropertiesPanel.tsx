@@ -31,6 +31,8 @@ export function PropertiesPanel({ node, edge, onUpdateNode, onClose }: Propertie
 function getNodeLabel(node: ProcessNode): string {
   if (node.data.kind === 'activity') return 'Activity'
   if (node.data.kind === 'decision') return 'Decision'
+  if (node.data.kind === 'stage') return 'Stage'
+  if (node.data.kind === 'bottleneck') return 'Bottleneck'
   return node.data.kind === 'start' ? 'Start' : 'End'
 }
 
@@ -47,11 +49,19 @@ function NodeEditor({ node, onUpdate }: NodeEditorProps) {
   }
 
   if (data.kind === 'activity') {
-    return <ActivityEditor nodeId={node.id} title={data.title} summary={data.summary} onUpdate={onUpdate} />
+    return <ActivityEditor nodeId={node.id} title={data.title} summary={data.summary} expectations={data.expectations ?? ''} onUpdate={onUpdate} />
   }
 
   if (data.kind === 'decision') {
     return <DecisionEditor nodeId={node.id} title={data.title} criteria={data.criteria} onUpdate={onUpdate} />
+  }
+
+  if (data.kind === 'stage') {
+    return <StageEditor nodeId={node.id} data={data} onUpdate={onUpdate} />
+  }
+
+  if (data.kind === 'bottleneck') {
+    return <BottleneckEditor nodeId={node.id} data={data} onUpdate={onUpdate} />
   }
 
   return null
@@ -61,12 +71,14 @@ interface ActivityEditorProps {
   nodeId: string
   title: string
   summary: string
+  expectations: string
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }
 
-function ActivityEditor({ nodeId, title, summary, onUpdate }: ActivityEditorProps) {
+function ActivityEditor({ nodeId, title, summary, expectations, onUpdate }: ActivityEditorProps) {
   const [titleDraft, setTitleDraft] = useState(title)
   const [summaryDraft, setSummaryDraft] = useState(summary)
+  const [expectationsDraft, setExpectationsDraft] = useState(expectations)
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
@@ -88,6 +100,14 @@ function ActivityEditor({ nodeId, title, summary, onUpdate }: ActivityEditorProp
         value={summaryDraft}
         onChange={(e) => setSummaryDraft(e.target.value)}
         onBlur={() => onUpdate(nodeId, { summary: summaryDraft })}
+        rows={3}
+      />
+      <label htmlFor="prop-expectations">Expectations</label>
+      <textarea
+        id="prop-expectations"
+        value={expectationsDraft}
+        onChange={(e) => setExpectationsDraft(e.target.value)}
+        onBlur={() => onUpdate(nodeId, { expectations: expectationsDraft })}
         rows={3}
       />
     </form>
@@ -131,5 +151,108 @@ function EdgeInfo({ edge }: { edge: ProcessEdge }) {
     <p className="properties-hint">
       Connection from <strong>{edge.source}</strong> to <strong>{edge.target}</strong>
     </p>
+  )
+}
+
+function StageEditor({
+  nodeId,
+  data,
+  onUpdate,
+}: {
+  nodeId: string
+  data: Extract<ProcessNode['data'], { kind: 'stage' }>
+  onUpdate: (nodeId: string, data: Record<string, unknown>) => void
+}) {
+  return (
+    <form className="properties-form">
+      <SemanticTextInput label="Title" value={data.title} onCommit={(value) => onUpdate(nodeId, { title: value })} />
+      <SemanticTextArea label="Goal" value={data.goal} onCommit={(value) => onUpdate(nodeId, { goal: value })} />
+      <SemanticTextArea label="Entry condition" value={data.entryCondition} onCommit={(value) => onUpdate(nodeId, { entryCondition: value })} />
+      <SemanticTextArea label="Exit condition" value={data.exitCondition} onCommit={(value) => onUpdate(nodeId, { exitCondition: value })} />
+      <SemanticTextInput label="Owner" value={data.owner} onCommit={(value) => onUpdate(nodeId, { owner: value })} />
+    </form>
+  )
+}
+
+function BottleneckEditor({
+  nodeId,
+  data,
+  onUpdate,
+}: {
+  nodeId: string
+  data: Extract<ProcessNode['data'], { kind: 'bottleneck' }>
+  onUpdate: (nodeId: string, data: Record<string, unknown>) => void
+}) {
+  return (
+    <form className="properties-form">
+      <SemanticTextInput label="Title" value={data.title} onCommit={(value) => onUpdate(nodeId, { title: value })} />
+      <SemanticTextArea label="Symptom" value={data.symptom} onCommit={(value) => onUpdate(nodeId, { symptom: value })} />
+      <SemanticTextArea label="Impact" value={data.impact} onCommit={(value) => onUpdate(nodeId, { impact: value })} />
+      <SemanticTextArea label="Suspected cause" value={data.suspectedCause} onCommit={(value) => onUpdate(nodeId, { suspectedCause: value })} />
+      <label htmlFor="prop-review-status">Review status</label>
+      <select
+        id="prop-review-status"
+        value={data.reviewStatus}
+        onChange={(event) => onUpdate(nodeId, { reviewStatus: event.target.value })}
+      >
+        <option value="unclear">Unclear</option>
+        <option value="disputed">Disputed</option>
+        <option value="needs-owner">Needs owner</option>
+        <option value="approved">Approved</option>
+        <option value="changed-since-approval">Changed since approval</option>
+      </select>
+    </form>
+  )
+}
+
+function SemanticTextInput({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onCommit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  const id = `prop-${label.toLowerCase().replaceAll(' ', '-')}`
+  return (
+    <>
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => onCommit(draft)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur()
+        }}
+      />
+    </>
+  )
+}
+
+function SemanticTextArea({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onCommit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  const id = `prop-${label.toLowerCase().replaceAll(' ', '-')}`
+  return (
+    <>
+      <label htmlFor={id}>{label}</label>
+      <textarea
+        id={id}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => onCommit(draft)}
+        rows={3}
+      />
+    </>
   )
 }

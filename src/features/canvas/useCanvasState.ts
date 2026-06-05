@@ -6,6 +6,7 @@ import type {
   GraphNode,
   ProcessEdge,
   ProcessNode,
+  ReviewStatus,
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
@@ -108,6 +109,14 @@ function toProcessEdge(edge: GraphEdge): ProcessEdge {
   }
 }
 
+function isReviewStatus(value: unknown): value is ReviewStatus {
+  return value === 'unclear' ||
+    value === 'disputed' ||
+    value === 'needs-owner' ||
+    value === 'approved' ||
+    value === 'changed-since-approval'
+}
+
 /**
  * Migrate older decision nodes (which had a 3-port schema with `yes`/
  * `no` outputs on top/bottom) to the new 2-port schema with only
@@ -174,7 +183,17 @@ type NodeDataPatch = {
   title?: string
   summary?: string
   criteria?: string
+  decisionOutcomes?: string[]
   roleIds?: string[]
+  expectations?: string
+  owner?: string
+  goal?: string
+  entryCondition?: string
+  exitCondition?: string
+  symptom?: string
+  impact?: string
+  suspectedCause?: string
+  reviewStatus?: ReviewStatus
 }
 
 interface UseCanvasStateOptions {
@@ -428,7 +447,17 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
             ...(typeof data.title === 'string' ? { title: data.title } : {}),
             ...(typeof data.summary === 'string' ? { summary: data.summary } : {}),
             ...(typeof data.criteria === 'string' ? { criteria: data.criteria } : {}),
+            ...(Array.isArray(data.decisionOutcomes) ? { decisionOutcomes: data.decisionOutcomes } : {}),
             ...(Array.isArray(data.roleIds) ? { roleTags: data.roleIds } : {}),
+            ...(typeof data.expectations === 'string' ? { expectations: data.expectations } : {}),
+            ...(typeof data.owner === 'string' ? { owner: data.owner } : {}),
+            ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
+            ...(typeof data.entryCondition === 'string' ? { entryCondition: data.entryCondition } : {}),
+            ...(typeof data.exitCondition === 'string' ? { exitCondition: data.exitCondition } : {}),
+            ...(typeof data.symptom === 'string' ? { symptom: data.symptom } : {}),
+            ...(typeof data.impact === 'string' ? { impact: data.impact } : {}),
+            ...(typeof data.suspectedCause === 'string' ? { suspectedCause: data.suspectedCause } : {}),
+            ...(isReviewStatus(data.reviewStatus) ? { reviewStatus: data.reviewStatus } : {}),
           },
         },
       })

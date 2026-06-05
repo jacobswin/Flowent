@@ -9,8 +9,10 @@ import type {
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
+import { planQuickCreate } from './engine/quickCreate'
 import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
+import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
 
 function toProcessNode(node: GraphNode): ProcessNode {
   if (node.type === 'activity') {
@@ -261,14 +263,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       const edgeId = `edge-${Date.now()}`
       applyCommand({
         type: 'AddEdge',
-        payload: {
-          id: edgeId,
-          sourceNodeId,
-          sourcePortId,
-          targetNodeId,
-          targetPortId,
-          label: '',
-        },
+        payload: createHandoffEdge(edgeId, sourceNodeId, sourcePortId, targetNodeId, targetPortId),
       })
     },
     [applyCommand],
@@ -323,97 +318,62 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     setEditorNodeId(null)
   }, [])
 
-  const addActivity = useCallback(
-    (position?: { x: number; y: number }) => {
-      const id = `activity-${Date.now()}`
-      setHistory((current) => {
-        let next = runCommand(current.present, {
-          type: 'AddNode',
-          payload: {
-            id,
-            type: 'activity',
-            x: position?.x ?? 300,
-            y: position?.y ?? 220,
-            width: 220,
-            height: 112,
-            title: 'New activity',
-            summary: '',
-            roleTags: [],
-            ports: [
-              { id: 'in', side: 'left' },
-              { id: 'out', side: 'right' },
-            ],
-          },
-        })
-        next = runCommand(next, {
-          type: 'SelectNode',
-          payload: { id, additive: false },
-        })
-        return pushHistory(current, next)
+  const addNodeByType = useCallback((type: ProcessElementType, position?: { x: number; y: number }) => {
+    const id = `${type}-${Date.now()}`
+    setHistory((current) => {
+      let next = runCommand(current.present, {
+        type: 'AddNode',
+        payload: createGraphNode(type, id, position ?? { x: 320, y: 240 }),
       })
-    },
-    [],
-  )
+      next = runCommand(next, {
+        type: 'SelectNode',
+        payload: { id, additive: false },
+      })
+      return pushHistory(current, next)
+    })
+  }, [])
 
-  const addDecision = useCallback(
-    (position?: { x: number; y: number }) => {
-      const id = `decision-${Date.now()}`
-      setHistory((current) => {
-        let next = runCommand(current.present, {
-          type: 'AddNode',
-          payload: {
-            id,
-            type: 'decision',
-            x: position?.x ?? 460,
-            y: position?.y ?? 320,
-            width: 190,
-            height: 124,
-            title: 'New decision',
-            criteria: '',
-            roleTags: [],
-            ports: [
-              { id: 'in', side: 'left' },
-              { id: 'out', side: 'right' },
-            ],
-          },
-        })
-        next = runCommand(next, {
-          type: 'SelectNode',
-          payload: { id, additive: false },
-        })
-        return pushHistory(current, next)
-      })
-    },
-    [],
-  )
+  const addActivity = useCallback((position?: { x: number; y: number }) => {
+    addNodeByType('activity', position)
+  }, [addNodeByType])
 
-  const addEnd = useCallback(
-    (position?: { x: number; y: number }) => {
-      const id = `end-${Date.now()}`
-      setHistory((current) => {
-        let next = runCommand(current.present, {
-          type: 'AddNode',
-          payload: {
-            id,
-            type: 'end',
-            x: position?.x ?? 400,
-            y: position?.y ?? 620,
-            width: 120,
-            height: 56,
-            title: 'End',
-            roleTags: [],
-            ports: [{ id: 'in', side: 'left' }],
-          },
-        })
-        next = runCommand(next, {
-          type: 'SelectNode',
-          payload: { id, additive: false },
-        })
-        return pushHistory(current, next)
+  const addDecision = useCallback((position?: { x: number; y: number }) => {
+    addNodeByType('decision', position)
+  }, [addNodeByType])
+
+  const addEnd = useCallback((position?: { x: number; y: number }) => {
+    addNodeByType('end', position)
+  }, [addNodeByType])
+
+  const addStage = useCallback((position?: { x: number; y: number }) => {
+    addNodeByType('stage', position)
+  }, [addNodeByType])
+
+  const addBottleneck = useCallback((position?: { x: number; y: number }) => {
+    addNodeByType('bottleneck', position)
+  }, [addNodeByType])
+
+  const quickCreate = useCallback((targetType: ProcessElementType) => {
+    setHistory((current) => {
+      const sourceNodeId = Array.from(current.present.selectedNodeIds)[0] ?? null
+      const newNodeId = `${targetType}-${Date.now()}`
+      const newEdgeId = `edge-${Date.now()}`
+      const plan = planQuickCreate(current.present, {
+        sourceNodeId,
+        targetType,
+        newNodeId,
+        newEdgeId,
+        fallbackPosition: { x: 320, y: 240 },
       })
-    },
-    [],
-  )
+
+      let next = runCommand(current.present, { type: 'AddNode', payload: plan.node })
+      if (plan.edge) {
+        next = runCommand(next, { type: 'AddEdge', payload: plan.edge })
+      }
+      next = runCommand(next, { type: 'SelectNode', payload: { id: plan.node.id, additive: false } })
+      return pushHistory(current, next)
+    })
+  }, [])
 
   const removeSelected = useCallback(() => {
     setHistory((current) => {
@@ -673,6 +633,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     addActivity,
     addDecision,
     addEnd,
+    addNodeByType,
+    addStage,
+    addBottleneck,
+    quickCreate,
     removeSelected,
     updateNodeData,
     moveSelectedNodes,

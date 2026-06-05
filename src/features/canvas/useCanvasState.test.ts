@@ -182,4 +182,29 @@ describe('useCanvasState', () => {
     const result = migrateDecisionPorts(base)
     expect(result).toBe(base)
   })
+
+  it('quick-creates a connected activity from the selected start node', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => {
+      result.current.onNodeClick('start', false)
+    })
+    act(() => {
+      result.current.quickCreate('activity')
+    })
+
+    expect(result.current.nodes.some((node) => node.data.kind === 'activity')).toBe(true)
+    expect(result.current.edges).toHaveLength(1)
+    expect(result.current.edges[0]).toMatchObject({ source: 'start', type: 'handoff' })
+  })
+
+  it('adds stage and bottleneck nodes from typed canvas actions', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addStage({ x: 100, y: 120 }))
+    act(() => result.current.addBottleneck({ x: 400, y: 120 }))
+
+    expect(result.current.nodes.some((node) => node.data.kind === 'stage')).toBe(true)
+    expect(result.current.nodes.some((node) => node.data.kind === 'bottleneck')).toBe(true)
+  })
 })

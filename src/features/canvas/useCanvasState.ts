@@ -1,14 +1,15 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   GraphCommand,
   GraphDocument,
+  GraphEdge,
   GraphNode,
   ProcessEdge,
   ProcessNode,
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
-import { createHistoryState, pushHistory, redo, type HistoryState, undo } from './engine/history'
+import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
 
 function toProcessNode(node: GraphNode): ProcessNode {
@@ -21,6 +22,7 @@ function toProcessNode(node: GraphNode): ProcessNode {
         title: node.title,
         summary: node.summary ?? '',
         roleIds: node.roleTags,
+        expectations: node.expectations ?? '',
         kind: 'activity',
       },
     }
@@ -34,7 +36,41 @@ function toProcessNode(node: GraphNode): ProcessNode {
       data: {
         title: node.title,
         criteria: node.criteria ?? '',
+        decisionOutcomes: node.decisionOutcomes ?? [],
+        owner: node.owner ?? '',
         kind: 'decision',
+      },
+    }
+  }
+
+  if (node.type === 'stage') {
+    return {
+      id: node.id,
+      type: 'stage',
+      position: { x: node.x, y: node.y },
+      data: {
+        title: node.title,
+        goal: node.goal ?? '',
+        entryCondition: node.entryCondition ?? '',
+        exitCondition: node.exitCondition ?? '',
+        owner: node.owner ?? '',
+        kind: 'stage',
+      },
+    }
+  }
+
+  if (node.type === 'bottleneck') {
+    return {
+      id: node.id,
+      type: 'bottleneck',
+      position: { x: node.x, y: node.y },
+      data: {
+        title: node.title,
+        symptom: node.symptom ?? '',
+        impact: node.impact ?? '',
+        suspectedCause: node.suspectedCause ?? '',
+        reviewStatus: node.reviewStatus ?? 'unclear',
+        kind: 'bottleneck',
       },
     }
   }
@@ -50,13 +86,63 @@ function toProcessNode(node: GraphNode): ProcessNode {
   }
 }
 
-function toProcessEdge(edge: { id: string; sourceNodeId: string; targetNodeId: string; label: string }): ProcessEdge {
+function toProcessEdge(edge: GraphEdge): ProcessEdge {
   return {
     id: edge.id,
     type: 'handoff',
     source: edge.sourceNodeId,
     target: edge.targetNodeId,
-    data: edge.label ? { label: edge.label } : undefined,
+    sourceHandle: edge.sourcePortId,
+    targetHandle: edge.targetPortId,
+    data: {
+      label: edge.label,
+      fromRole: edge.fromRole ?? '',
+      toRole: edge.toRole ?? '',
+      artifact: edge.artifact ?? '',
+      expectation: edge.expectation ?? '',
+      readinessSignal: edge.readinessSignal ?? '',
+      reviewStatus: edge.reviewStatus ?? 'unclear',
+    },
+  }
+}
+
+/**
+ * Migrate older decision nodes (which had a 3-port schema with `yes`/
+ * `no` outputs on top/bottom) to the new 2-port schema with only
+ * `in` (left) and `out` (right). Without this, decision nodes saved by
+ * an earlier version of Flowent keep showing three ports on the canvas
+ * even after the port schema is updated. Exported for unit tests.
+ */
+export function migrateDecisionPorts(doc: GraphDocument): GraphDocument {
+  let needsMigration = false
+  for (const node of doc.nodes.values()) {
+    if (node.type === 'decision' && node.ports.length !== 2) {
+      needsMigration = true
+      break
+    }
+  }
+  if (!needsMigration) return doc
+
+  const nodes = new Map(doc.nodes)
+  for (const [id, node] of nodes) {
+    if (node.type === 'decision') {
+      nodes.set(id, {
+        ...node,
+        ports: [
+          { id: 'in', side: 'left' },
+          { id: 'out', side: 'right' },
+        ],
+      })
+    }
+  }
+  // Mark the doc dirty so the autosave loop persists the migrated shape
+  // back to the server. Without this, the in-memory doc is migrated but
+  // the disk file keeps the legacy 3-port schema, so the next reload
+  // re-runs the migration (still works, but a wasted PATCH round-trip).
+  return {
+    ...doc,
+    nodes,
+    meta: { dirty: true, version: doc.meta.version + 1 },
   }
 }
 
@@ -67,13 +153,17 @@ function createInitialDocument(): GraphDocument {
     payload: {
       id: 'start',
       type: 'start',
-      x: 400,
-      y: 50,
+      // Place the start node in the upper-left of the visible canvas,
+      // away from the floating toolbar at top: 16px. The header (title
+      // and subtitle) takes up the left side, so a horizontal offset
+      // keeps the node clear of both.
+      x: 360,
+      y: 200,
       width: 120,
       height: 56,
       title: 'Start',
       roleTags: [],
-      ports: [{ id: 'out', side: 'bottom' }],
+      ports: [{ id: 'out', side: 'right' }],
     },
   })
 }
@@ -85,10 +175,24 @@ type NodeDataPatch = {
   roleIds?: string[]
 }
 
-export function useCanvasState() {
-  const [history, setHistory] = useState<HistoryState<GraphDocument>>(() =>
-    createHistoryState(createInitialDocument()),
-  )
+interface UseCanvasStateOptions {
+  /** Document to start from. If omitted, uses the canonical Start-node doc. */
+  initialDocument?: GraphDocument
+  /** Called with the latest document 500ms after the last edit. */
+  onAutosave?: (doc: GraphDocument) => void
+}
+
+export function useCanvasState(options: UseCanvasStateOptions = {}) {
+  const { initialDocument, onAutosave } = options
+  const [history, setHistory] = useState<HistoryState<GraphDocument>>(() => {
+    const base = initialDocument ?? createInitialDocument()
+    return createHistoryState(migrateDecisionPorts(base))
+  })
+  // Synchronous shadow of the current selection, updated by applyCommand
+  // outside of React's batching. Native pointermove listeners that fire
+  // in the same tick as a pointerdown-driven SelectNode can read this
+  // without waiting for React to commit.
+  const liveSelectedNodeIds = useRef<Set<string>>(new Set())
   const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const [connectorMode, setConnectorMode] = useState(false)
@@ -110,7 +214,30 @@ export function useCanvasState() {
       const nextDoc = runCommand(current.present, command)
       return pushHistory(current, nextDoc)
     })
-  }, [])
+    // Keep the synchronous selection shadow in step with React state so
+    // that native event listeners firing on the same tick as a pointerdown
+    // can observe the selection that pointerdown just established.
+    if (command.type === 'SelectNode') {
+      const next = command.payload.additive ? new Set(liveSelectedNodeIds.current) : new Set<string>()
+      if (command.payload.additive) {
+        if (next.has(command.payload.id)) {
+          next.delete(command.payload.id)
+        } else {
+          next.add(command.payload.id)
+        }
+      } else {
+        next.add(command.payload.id)
+      }
+      liveSelectedNodeIds.current = next
+    } else if (command.type === 'MoveNodes') {
+      // No-op for selection; MoveNodes mutates nodes only.
+    } else {
+      // For other commands, recompute the live selection from history
+      // after the scheduled state update lands. Until then, fall back
+      // to the current snapshot.
+      liveSelectedNodeIds.current = new Set(history.present.selectedNodeIds)
+    }
+  }, [history])
 
   const onNodesChange = useCallback(
     () => {
@@ -127,16 +254,16 @@ export function useCanvasState() {
   )
 
   const onConnect = useCallback(
-    (source: string, target: string) => {
+    (sourceNodeId: string, targetNodeId: string, sourcePortId = 'out', targetPortId = 'in') => {
       const edgeId = `edge-${Date.now()}`
       applyCommand({
         type: 'AddEdge',
         payload: {
           id: edgeId,
-          sourceNodeId: source,
-          sourcePortId: 'out',
-          targetNodeId: target,
-          targetPortId: 'in',
+          sourceNodeId,
+          sourcePortId,
+          targetNodeId,
+          targetPortId,
           label: '',
         },
       })
@@ -167,22 +294,19 @@ export function useCanvasState() {
     setConnectionStart({ nodeId, portId })
   }, [])
 
-  const endConnection = useCallback((targetNodeId: string) => {
+  const endConnection = useCallback((targetNodeId: string, targetPortId = 'in') => {
     if (connectionStart && connectionStart.nodeId !== targetNodeId) {
-      onConnect(connectionStart.nodeId, targetNodeId)
+      onConnect(connectionStart.nodeId, targetNodeId, connectionStart.portId, targetPortId)
     }
     setConnectionStart(null)
   }, [connectionStart, onConnect])
 
   const onPaneClick = useCallback(() => {
-    setHistory((current) => ({
-      ...current,
-      present: {
-        ...current.present,
-        selectedNodeIds: new Set(),
-        selectedEdgeIds: new Set(),
-        meta: { dirty: true, version: current.present.meta.version + 1 },
-      },
+    setHistory((current) => setPresent(current, {
+      ...current.present,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      meta: { dirty: true, version: current.present.meta.version + 1 },
     }))
     setEditorNodeId(null)
     setConnectionStart(null)
@@ -213,8 +337,8 @@ export function useCanvasState() {
             summary: '',
             roleTags: [],
             ports: [
-              { id: 'in', side: 'top' },
-              { id: 'out', side: 'bottom' },
+              { id: 'in', side: 'left' },
+              { id: 'out', side: 'right' },
             ],
           },
         })
@@ -245,9 +369,8 @@ export function useCanvasState() {
             criteria: '',
             roleTags: [],
             ports: [
-              { id: 'in', side: 'top' },
-              { id: 'yes', side: 'bottom' },
-              { id: 'no', side: 'right' },
+              { id: 'in', side: 'left' },
+              { id: 'out', side: 'right' },
             ],
           },
         })
@@ -276,7 +399,7 @@ export function useCanvasState() {
             height: 56,
             title: 'End',
             roleTags: [],
-            ports: [{ id: 'in', side: 'top' }],
+            ports: [{ id: 'in', side: 'left' }],
           },
         })
         next = runCommand(next, {
@@ -352,7 +475,10 @@ export function useCanvasState() {
 
   const moveSelectedNodes = useCallback(
     (dx: number, dy: number) => {
-      const ids = Array.from(document.selectedNodeIds)
+      // Read from the synchronous shadow ref so that moves triggered by
+      // a native pointermove in the same tick as a pointerdown see the
+      // selection that the pointerdown just established.
+      const ids = Array.from(liveSelectedNodeIds.current)
       if (ids.length === 0) return
 
       applyCommand({
@@ -360,7 +486,7 @@ export function useCanvasState() {
         payload: { ids, dx, dy },
       })
     },
-    [document.selectedNodeIds, applyCommand],
+    [applyCommand],
   )
 
   const undoAction = useCallback(() => {
@@ -401,8 +527,9 @@ export function useCanvasState() {
   const zoomIn = useCallback(() => {
     setHistory((current) => {
       const newZoom = Math.min(current.present.viewport.zoom * 1.2, 3)
-      return pushHistory(current, {
+      return setPresent(current, {
         ...current.present,
+        meta: { dirty: true, version: current.present.meta.version + 1 },
         viewport: { ...current.present.viewport, zoom: newZoom },
       })
     })
@@ -411,8 +538,9 @@ export function useCanvasState() {
   const zoomOut = useCallback(() => {
     setHistory((current) => {
       const newZoom = Math.max(current.present.viewport.zoom / 1.2, 0.2)
-      return pushHistory(current, {
+      return setPresent(current, {
         ...current.present,
+        meta: { dirty: true, version: current.present.meta.version + 1 },
         viewport: { ...current.present.viewport, zoom: newZoom },
       })
     })
@@ -420,17 +548,43 @@ export function useCanvasState() {
 
   const zoomReset = useCallback(() => {
     setHistory((current) =>
-      pushHistory(current, {
+      setPresent(current, {
         ...current.present,
+        meta: { dirty: true, version: current.present.meta.version + 1 },
         viewport: { x: 0, y: 0, zoom: 1 },
       }),
     )
   }, [])
 
+  /**
+   * Zoom by a multiplicative factor while keeping the screen point under the
+   * cursor anchored. Used by mouse wheel and trackpad pinch.
+   */
+  const zoomAt = useCallback((factor: number, screenX: number, screenY: number) => {
+    setHistory((current) => {
+      const viewport = current.present.viewport
+      const newZoom = Math.max(0.2, Math.min(3, viewport.zoom * factor))
+      if (newZoom === viewport.zoom) return current
+
+      // World point under cursor before zoom stays under cursor after zoom.
+      const worldX = (screenX - viewport.x) / viewport.zoom
+      const worldY = (screenY - viewport.y) / viewport.zoom
+      const nextX = screenX - worldX * newZoom
+      const nextY = screenY - worldY * newZoom
+
+      return setPresent(current, {
+        ...current.present,
+        meta: { dirty: true, version: current.present.meta.version + 1 },
+        viewport: { x: nextX, y: nextY, zoom: newZoom },
+      })
+    })
+  }, [])
+
   const panBy = useCallback((dx: number, dy: number) => {
     setHistory((current) =>
-      pushHistory(current, {
+      setPresent(current, {
         ...current.present,
+        meta: { dirty: true, version: current.present.meta.version + 1 },
         viewport: {
           x: current.present.viewport.x + dx,
           y: current.present.viewport.y + dy,
@@ -469,6 +623,26 @@ export function useCanvasState() {
 
   const editorNode = nodes.find((n) => n.id === editorNodeId) ?? null
 
+  // Debounced autosave: 500ms after the last history change, fire the
+  // callback with the latest present. The `onAutosave` prop is held in a
+  // ref so that the timer only restarts when the document changes — not
+  // when the parent re-renders with a new closure (which is every render
+  // unless the parent memos it; listing it as a dep here would create a
+  // livelock where the timer keeps getting reset and never fires).
+  const onAutosaveRef = useRef(onAutosave)
+  useEffect(() => {
+    onAutosaveRef.current = onAutosave
+  }, [onAutosave])
+
+  useEffect(() => {
+    if (!onAutosaveRef.current) return
+    if (!document.meta.dirty) return
+    const timer = setTimeout(() => {
+      onAutosaveRef.current?.(document)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [document])
+
   return {
     nodes,
     edges,
@@ -505,6 +679,7 @@ export function useCanvasState() {
     zoomIn,
     zoomOut,
     zoomReset,
+    zoomAt,
     panBy,
     viewport: document.viewport,
     canUndo: history.past.length > 0,

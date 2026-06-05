@@ -55,6 +55,22 @@ function errorResponse(status: number, message: string): Response {
   })
 }
 
+type SafeParseResult<T> = { ok: true; value: { success: true; data: T } } | { ok: false; error: string }
+
+function safeParseJsonBody<T>(raw: string, schema: z.ZodType<T>): SafeParseResult<T> {
+  let payload: unknown
+  try {
+    payload = JSON.parse(raw)
+  } catch (err) {
+    return { ok: false, error: `Malformed JSON: ${(err as Error).message}` }
+  }
+  const result = schema.safeParse(payload)
+  if (!result.success) {
+    return { ok: false, error: `Invalid payload: ${result.error.issues.map((issue) => issue.message).join('; ')}` }
+  }
+  return { ok: true, value: result as { success: true; data: T } }
+}
+
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -74,14 +90,14 @@ export function createLibraryRouteHandler(deps: LibraryRouteDeps) {
     // POST /api/library/maps
     if (pathname === '/api/library/maps' && request.method === 'POST') {
       const raw = await request.text()
-      const parsed = createMapSchema.safeParse(JSON.parse(raw))
-      if (!parsed.success) return errorResponse(400, 'Invalid map payload.')
+      const parsed = safeParseJsonBody(raw, createMapSchema)
+      if (!parsed.ok) return errorResponse(400, parsed.error)
       const map = await loadAndMutateLibrary(deps.filePath, (lib) => {
-        const order = lib.maps.filter((m) => m.folderId === (parsed.data.folderId ?? null)).length
+        const order = lib.maps.filter((m) => m.folderId === (parsed.value.data.folderId ?? null)).length
         const newMap: SavedMap = {
           id: generateId('map'),
-          name: parsed.data.name,
-          folderId: parsed.data.folderId ?? null,
+          name: parsed.value.data.name,
+          folderId: parsed.value.data.folderId ?? null,
           order,
           updatedAt: Date.now(),
         }
@@ -99,9 +115,9 @@ export function createLibraryRouteHandler(deps: LibraryRouteDeps) {
       const mapId = mapMatch[1]
       if (request.method === 'PATCH') {
         const raw = await request.text()
-        const parsed = patchMapSchema.safeParse(JSON.parse(raw))
-        if (!parsed.success) {
-          return errorResponse(400, 'Invalid map patch.')
+        const parsed = safeParseJsonBody(raw, patchMapSchema)
+        if (!parsed.ok) {
+          return errorResponse(400, parsed.error)
         }
         try {
           const updated = await loadAndMutateLibrary(deps.filePath, (lib) => {
@@ -110,12 +126,12 @@ export function createLibraryRouteHandler(deps: LibraryRouteDeps) {
               throw new Error('NOT_FOUND')
             }
             let next: SavedLibrary = lib
-            if (typeof parsed.data.name === 'string') next = renameMap(next, mapId, parsed.data.name)
-            if (parsed.data.folderId !== undefined) {
-              next = moveMapToFolder(next, mapId, parsed.data.folderId)
+            if (typeof parsed.value.data.name === 'string') next = renameMap(next, mapId, parsed.value.data.name)
+            if (parsed.value.data.folderId !== undefined) {
+              next = moveMapToFolder(next, mapId, parsed.value.data.folderId)
             }
-            if (parsed.data.document !== undefined) {
-              next = setMapDocument(next, mapId, parsed.data.document)
+            if (parsed.value.data.document !== undefined) {
+              next = setMapDocument(next, mapId, parsed.value.data.document)
             }
             return { next, result: next.maps.find((m) => m.id === mapId)! }
           })
@@ -143,11 +159,11 @@ export function createLibraryRouteHandler(deps: LibraryRouteDeps) {
     // POST /api/library/folders
     if (pathname === '/api/library/folders' && request.method === 'POST') {
       const raw = await request.text()
-      const parsed = createFolderSchema.safeParse(JSON.parse(raw))
-      if (!parsed.success) return errorResponse(400, 'Invalid folder payload.')
+      const parsed = safeParseJsonBody(raw, createFolderSchema)
+      if (!parsed.ok) return errorResponse(400, parsed.error)
       const folder = await loadAndMutateLibrary(deps.filePath, (lib) => {
-        const order = lib.folders.filter((f) => f.parentId === (parsed.data.parentId ?? null)).length
-        const newFolder = { id: generateId('folder'), name: parsed.data.name, parentId: parsed.data.parentId ?? null, order }
+        const order = lib.folders.filter((f) => f.parentId === (parsed.value.data.parentId ?? null)).length
+        const newFolder = { id: generateId('folder'), name: parsed.value.data.name, parentId: parsed.value.data.parentId ?? null, order }
         return { next: addFolder(lib, newFolder), result: newFolder }
       })
       return json(folder, 201)
@@ -159,16 +175,16 @@ export function createLibraryRouteHandler(deps: LibraryRouteDeps) {
       const folderId = folderMatch[1]
       if (request.method === 'PATCH') {
         const raw = await request.text()
-        const parsed = patchFolderSchema.safeParse(JSON.parse(raw))
-        if (!parsed.success) return errorResponse(400, 'Invalid folder patch.')
+        const parsed = safeParseJsonBody(raw, patchFolderSchema)
+        if (!parsed.ok) return errorResponse(400, parsed.error)
         try {
           const updated = await loadAndMutateLibrary(deps.filePath, (lib) => {
             const existing = lib.folders.find((f) => f.id === folderId)
             if (!existing) throw new Error('NOT_FOUND')
             let next: SavedLibrary = lib
-            if (typeof parsed.data.name === 'string') next = renameFolder(next, folderId, parsed.data.name)
-            if (parsed.data.parentId !== undefined) {
-              next = moveFolderToFolder(next, folderId, parsed.data.parentId)
+            if (typeof parsed.value.data.name === 'string') next = renameFolder(next, folderId, parsed.value.data.name)
+            if (parsed.value.data.parentId !== undefined) {
+              next = moveFolderToFolder(next, folderId, parsed.value.data.parentId)
             }
             return { next, result: next.folders.find((f) => f.id === folderId)! }
           })

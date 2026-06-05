@@ -67,6 +67,18 @@ describe('libraryRoute', () => {
     expect(getBody.data.maps[0].folderId).toBe(folder.id)
   })
 
+  it('rejects malformed JSON with a precise 400 message', async () => {
+    const handle = createLibraryRouteHandler({ filePath: file })
+    const res = await dispatch(handle, new Request('http://test/api/library/maps', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{ "name": "broken"',
+    }))
+
+    expect(res.status).toBe(400)
+    const body = await res.json() as { success: boolean, error: string }
+    expect(body.success).toBe(false)
+    expect(body.error).toMatch(/Malformed JSON/)
+  })
+
   it('rejects invalid document patches before persisting them', async () => {
     const handle = createLibraryRouteHandler({ filePath: file })
     const create = await dispatch(handle, new Request('http://test/api/library/maps', {

@@ -210,8 +210,11 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   }, [nodes, selectedNodeIds])
 
   const applyCommand = useCallback((command: GraphCommand) => {
+    let nextSelected: Set<string> | null = null
+
     setHistory((current) => {
       const nextDoc = runCommand(current.present, command)
+      nextSelected = nextDoc.selectedNodeIds
       return pushHistory(current, nextDoc)
     })
     // Keep the synchronous selection shadow in step with React state so
@@ -231,13 +234,13 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       liveSelectedNodeIds.current = next
     } else if (command.type === 'MoveNodes') {
       // No-op for selection; MoveNodes mutates nodes only.
-    } else {
-      // For other commands, recompute the live selection from history
-      // after the scheduled state update lands. Until then, fall back
-      // to the current snapshot.
-      liveSelectedNodeIds.current = new Set(history.present.selectedNodeIds)
+    } else if (nextSelected) {
+      // Capture the post-command selection synchronously from the same
+      // setHistory pass that produced the new doc. This avoids reading
+      // a stale history.present while React state is still batching.
+      liveSelectedNodeIds.current = new Set(nextSelected)
     }
-  }, [history])
+  }, [])
 
   const onNodesChange = useCallback(
     () => {
@@ -332,7 +335,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
             x: position?.x ?? 300,
             y: position?.y ?? 220,
             width: 220,
-            height: 96,
+            height: 112,
             title: 'New activity',
             summary: '',
             roleTags: [],
@@ -363,8 +366,8 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
             type: 'decision',
             x: position?.x ?? 460,
             y: position?.y ?? 320,
-            width: 180,
-            height: 108,
+            width: 190,
+            height: 124,
             title: 'New decision',
             criteria: '',
             roleTags: [],

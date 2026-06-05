@@ -53,7 +53,7 @@ function NodeEditor({ node, onUpdate }: NodeEditorProps) {
   }
 
   if (data.kind === 'decision') {
-    return <DecisionEditor nodeId={node.id} title={data.title} criteria={data.criteria} onUpdate={onUpdate} />
+    return <DecisionEditor nodeId={node.id} title={data.title} criteria={data.criteria} owner={data.owner ?? ''} decisionOutcomes={data.decisionOutcomes ?? []} onUpdate={onUpdate} />
   }
 
   if (data.kind === 'stage') {
@@ -118,12 +118,24 @@ interface DecisionEditorProps {
   nodeId: string
   title: string
   criteria: string
+  owner: string
+  decisionOutcomes: string[]
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }
 
-function DecisionEditor({ nodeId, title, criteria, onUpdate }: DecisionEditorProps) {
+function DecisionEditor({ nodeId, title, criteria, owner, decisionOutcomes, onUpdate }: DecisionEditorProps) {
   const [titleDraft, setTitleDraft] = useState(title)
   const [criteriaDraft, setCriteriaDraft] = useState(criteria)
+  const [ownerDraft, setOwnerDraft] = useState(owner)
+  const [outcomesDraft, setOutcomesDraft] = useState(decisionOutcomes.join('\n'))
+
+  function commitOutcomes(): void {
+    const next = outcomesDraft
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+    onUpdate(nodeId, { decisionOutcomes: next })
+  }
 
   return (
     <form className="properties-form">
@@ -140,6 +152,21 @@ function DecisionEditor({ nodeId, title, criteria, onUpdate }: DecisionEditorPro
         value={criteriaDraft}
         onChange={(e) => setCriteriaDraft(e.target.value)}
         onBlur={() => onUpdate(nodeId, { criteria: criteriaDraft })}
+        rows={3}
+      />
+      <label htmlFor="prop-owner">Decision owner</label>
+      <input
+        id="prop-owner"
+        value={ownerDraft}
+        onChange={(e) => setOwnerDraft(e.target.value)}
+        onBlur={() => onUpdate(nodeId, { owner: ownerDraft })}
+      />
+      <label htmlFor="prop-outcomes">Possible outcomes (one per line)</label>
+      <textarea
+        id="prop-outcomes"
+        value={outcomesDraft}
+        onChange={(e) => setOutcomesDraft(e.target.value)}
+        onBlur={commitOutcomes}
         rows={3}
       />
     </form>

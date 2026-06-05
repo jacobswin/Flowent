@@ -1,9 +1,7 @@
 import type { useCanvasState } from './useCanvasState'
 
 interface ToolbarProps {
-  onAddActivity: ReturnType<typeof useCanvasState>['addActivity']
-  onAddDecision: ReturnType<typeof useCanvasState>['addDecision']
-  onAddEnd: ReturnType<typeof useCanvasState>['addEnd']
+  onToggleConnector: ReturnType<typeof useCanvasState>['toggleConnectorMode']
   onRemove: ReturnType<typeof useCanvasState>['removeSelected']
   onAutoLayout: () => void
   onUndo: () => void
@@ -11,12 +9,11 @@ interface ToolbarProps {
   canUndo: boolean
   canRedo: boolean
   hasSelection: boolean
+  connectorMode: boolean
 }
 
 export function Toolbar({
-  onAddActivity,
-  onAddDecision,
-  onAddEnd,
+  onToggleConnector,
   onRemove,
   onAutoLayout,
   onUndo,
@@ -24,46 +21,22 @@ export function Toolbar({
   canUndo,
   canRedo,
   hasSelection,
+  connectorMode,
 }: ToolbarProps) {
   return (
     <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
       <button
         type="button"
-        className="toolbar-button"
-        onClick={() => onAddActivity()}
-        title="Add activity"
+        className={`toolbar-button ${connectorMode ? 'active' : ''}`}
+        onClick={onToggleConnector}
+        title="Connector mode (C)"
       >
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <rect x="2" y="4" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-          <line x1="9" y1="7" x2="9" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="7" y1="9" x2="11" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="14" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="6" y1="9" x2="12" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
-        <span>Activity</span>
-      </button>
-      <button
-        type="button"
-        className="toolbar-button"
-        onClick={() => onAddDecision()}
-        title="Add decision"
-      >
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path d="M9 2L16 9L9 16L2 9Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-          <line x1="9" y1="7" x2="9" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="7" y1="9" x2="11" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-        <span>Decision</span>
-      </button>
-      <button
-        type="button"
-        className="toolbar-button"
-        onClick={() => onAddEnd()}
-        title="Add end"
-      >
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.5" />
-          <rect x="6" y="6" width="6" height="6" rx="1" fill="currentColor" />
-        </svg>
-        <span>End</span>
+        <span>Connect</span>
       </button>
       <div className="toolbar-divider" />
       <button

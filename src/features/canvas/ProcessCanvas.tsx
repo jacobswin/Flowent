@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import type { DragEvent } from 'react'
 import type { FederatedPointerEvent } from 'pixi.js'
 import { Graphics } from 'pixi.js'
 import type { ProcessNode } from './canvasTypes'
@@ -10,10 +11,34 @@ import { createCanvasLayers, drawGrid } from './render/layers'
 import { drawNodes } from './render/drawNodes'
 import { drawEdges } from './render/drawEdges'
 import { mapKeyToAction } from './engine/keyboard'
+import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
 
 export function ProcessCanvas() {
   const canvas = useCanvasState()
   const hostRef = useRef<HTMLDivElement | null>(null)
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (hasDraggedProcessElement(event.dataTransfer)) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+    }
+  }, [])
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const type = readDraggedProcessElement(event.dataTransfer)
+      if (!type) return
+
+      event.preventDefault()
+      const rect = event.currentTarget.getBoundingClientRect()
+      const screenX = event.clientX - rect.left
+      const screenY = event.clientY - rect.top
+      const worldX = (screenX - canvas.viewport.x) / canvas.viewport.zoom
+      const worldY = (screenY - canvas.viewport.y) / canvas.viewport.zoom
+      canvas.addNodeByType(type, { x: worldX, y: worldY })
+    },
+    [canvas],
+  )
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -422,9 +447,7 @@ export function ProcessCanvas() {
       </div>
 
       <Toolbar
-        onAddActivity={canvas.addActivity}
-        onAddDecision={canvas.addDecision}
-        onAddEnd={canvas.addEnd}
+        onToggleConnector={canvas.toggleConnectorMode}
         onRemove={canvas.removeSelected}
         onAutoLayout={() => canvas.autoLayout()}
         onUndo={canvas.undo}
@@ -432,9 +455,19 @@ export function ProcessCanvas() {
         canUndo={canvas.canUndo}
         canRedo={canvas.canRedo}
         hasSelection={canvas.selectedNodeIds.size > 0}
+        connectorMode={canvas.connectorMode}
       />
 
-      <div ref={hostRef} className="pixi-host" aria-label="Process canvas" tabIndex={0} />
+      <ProcessElementPalette onQuickCreate={canvas.quickCreate} />
+
+      <div
+        ref={hostRef}
+        className="pixi-host"
+        aria-label="Process canvas"
+        tabIndex={0}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      />
 
       <div className="keyboard-hint" aria-hidden="true">
         <span><kbd>A</kbd> Activity</span>
@@ -534,6 +567,8 @@ function toGraphNode(node: ProcessNode) {
   }
 
   const isStart = node.data.kind === 'start'
+  const data = node.data
+  const label = data.kind === 'start' || data.kind === 'end' ? data.label : ''
 
   return {
     id: node.id,
@@ -542,7 +577,7 @@ function toGraphNode(node: ProcessNode) {
     y: node.position.y,
     width: 120,
     height: 56,
-    title: node.data.label,
+    title: label,
     roleTags: [],
     ports: [{ id: isStart ? 'out' : 'in', side: isStart ? ('bottom' as const) : ('top' as const) }],
   }

@@ -13,6 +13,7 @@ import { drawEdges } from './render/drawEdges'
 import { mapKeyToAction } from './engine/keyboard'
 import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
 import { FocusBar } from './FocusBar'
+import { AlignmentChecklist } from './AlignmentChecklist'
 
 export function ProcessCanvas() {
   const canvas = useCanvasState()
@@ -479,6 +480,11 @@ export function ProcessCanvas() {
       />
 
       <FocusBar focus={canvas.focus} roles={canvas.roles} onChange={canvas.setFocus} />
+
+      <AlignmentChecklist
+        diagnostics={canvas.diagnostics}
+        onSelectDiagnostic={(diagnostic) => canvas.selectDiagnosticTarget(diagnostic.targetType, diagnostic.targetId)}
+      />
 
       <div className="keyboard-hint" aria-hidden="true">
         <span><kbd>A</kbd> Activity</span>

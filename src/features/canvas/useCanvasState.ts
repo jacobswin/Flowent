@@ -15,6 +15,7 @@ import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, u
 import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
 import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focus/processFocus'
+import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
 
 function toProcessNode(node: GraphNode): ProcessNode {
   if (node.type === 'activity') {
@@ -225,6 +226,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const focusView = useMemo(() => deriveProcessFocus(document, focus), [document, focus])
   const roles = useMemo(() => collectRoles(document), [document])
+  const diagnostics = useMemo(() => getProcessMapDiagnostics(document), [document])
 
   const nodes = useMemo(() => Array.from(document.nodes.values()).map(toProcessNode), [document])
   const edges = useMemo(() => Array.from(document.edges.values()).map(toProcessEdge), [document])
@@ -694,6 +696,18 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     return () => clearTimeout(timer)
   }, [document])
 
+  const selectDiagnosticTarget = useCallback((targetType: 'node' | 'edge', targetId: string) => {
+    if (targetType === 'node') {
+      applyCommand({ type: 'SelectNode', payload: { id: targetId, additive: false } })
+      setEditorNodeId(targetId)
+      setEditorEdgeId(null)
+    } else {
+      applyCommand({ type: 'SelectEdge', payload: { id: targetId, additive: false } })
+      setEditorEdgeId(targetId)
+      setEditorNodeId(null)
+    }
+  }, [applyCommand])
+
   return {
     nodes,
     edges,
@@ -703,6 +717,8 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     selectedEdge,
     editorNode,
     editorEdge,
+    diagnostics,
+    selectDiagnosticTarget,
     marquee,
     connectorMode,
     connectionStart,

@@ -941,3 +941,86 @@ textarea {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* ===== Alignment checklist ===== */
+
+.alignment-checklist {
+  position: absolute;
+  right: 18px;
+  bottom: 98px;
+  z-index: 8;
+  width: 300px;
+  max-height: 34vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.alignment-checklist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.alignment-checklist-header strong {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, white);
+  color: var(--accent);
+}
+
+.alignment-checklist-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.alignment-diagnostic-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alignment-diagnostic {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 14px;
+  background: white;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.alignment-diagnostic-warning {
+  border-color: color-mix(in srgb, #f97316 34%, var(--border));
+}
+
+.alignment-diagnostic-title {
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.alignment-diagnostic-detail {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}

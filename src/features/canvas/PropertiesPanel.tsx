@@ -5,10 +5,11 @@ interface PropertiesPanelProps {
   node: ProcessNode | null
   edge: ProcessEdge | null
   onUpdateNode: (nodeId: string, data: Record<string, unknown>) => void
+  onUpdateEdge: (edgeId: string, data: Record<string, unknown>) => void
   onClose: () => void
 }
 
-export function PropertiesPanel({ node, edge, onUpdateNode, onClose }: PropertiesPanelProps) {
+export function PropertiesPanel({ node, edge, onUpdateNode, onUpdateEdge, onClose }: PropertiesPanelProps) {
   if (!node && !edge) return null
 
   return (
@@ -23,7 +24,7 @@ export function PropertiesPanel({ node, edge, onUpdateNode, onClose }: Propertie
       </div>
 
       {node && <NodeEditor node={node} onUpdate={onUpdateNode} />}
-      {edge && !node && <EdgeInfo edge={edge} />}
+      {edge && !node && <HandoffEditor edge={edge} onUpdate={onUpdateEdge} />}
     </div>
   )
 }
@@ -173,11 +174,35 @@ function DecisionEditor({ nodeId, title, criteria, owner, decisionOutcomes, onUp
   )
 }
 
-function EdgeInfo({ edge }: { edge: ProcessEdge }) {
+function HandoffEditor({
+  edge,
+  onUpdate,
+}: {
+  edge: ProcessEdge
+  onUpdate: (edgeId: string, data: Record<string, unknown>) => void
+}) {
+  const data = edge.data ?? {}
   return (
-    <p className="properties-hint">
-      Connection from <strong>{edge.source}</strong> to <strong>{edge.target}</strong>
-    </p>
+    <form className="properties-form">
+      <SemanticTextInput label="Label" value={data.label ?? ''} onCommit={(value) => onUpdate(edge.id, { label: value })} />
+      <SemanticTextInput label="From role" value={data.fromRole ?? ''} onCommit={(value) => onUpdate(edge.id, { fromRole: value })} />
+      <SemanticTextInput label="To role" value={data.toRole ?? ''} onCommit={(value) => onUpdate(edge.id, { toRole: value })} />
+      <SemanticTextInput label="Artifact" value={data.artifact ?? ''} onCommit={(value) => onUpdate(edge.id, { artifact: value })} />
+      <SemanticTextArea label="Handoff expectation" value={data.expectation ?? ''} onCommit={(value) => onUpdate(edge.id, { expectation: value })} />
+      <SemanticTextArea label="Readiness signal" value={data.readinessSignal ?? ''} onCommit={(value) => onUpdate(edge.id, { readinessSignal: value })} />
+      <label htmlFor="prop-edge-review-status">Review status</label>
+      <select
+        id="prop-edge-review-status"
+        value={data.reviewStatus ?? 'unclear'}
+        onChange={(event) => onUpdate(edge.id, { reviewStatus: event.target.value })}
+      >
+        <option value="unclear">Unclear</option>
+        <option value="disputed">Disputed</option>
+        <option value="needs-owner">Needs owner</option>
+        <option value="approved">Approved</option>
+        <option value="changed-since-approval">Changed since approval</option>
+      </select>
+    </form>
   )
 }
 

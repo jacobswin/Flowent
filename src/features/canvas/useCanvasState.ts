@@ -229,6 +229,19 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     if (ids.length === 1) return nodes.find((n) => n.id === ids[0]) ?? null
     return null
   }, [nodes, selectedNodeIds])
+  const selectedEdgeIds = useMemo(() => document.selectedEdgeIds, [document])
+  const selectedEdge = useMemo(() => {
+    const ids = Array.from(selectedEdgeIds)
+    if (ids.length !== 1) return null
+    const edge = document.edges.get(ids[0])
+    return edge ? toProcessEdge(edge) : null
+  }, [document.edges, selectedEdgeIds])
+  const [editorEdgeId, setEditorEdgeId] = useState<string | null>(null)
+  const editorEdge = useMemo(() => {
+    if (!editorEdgeId) return null
+    const edge = document.edges.get(editorEdgeId)
+    return edge ? toProcessEdge(edge) : null
+  }, [document.edges, editorEdgeId])
 
   const applyCommand = useCallback((command: GraphCommand) => {
     let nextSelected: Set<string> | null = null
@@ -298,9 +311,14 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     [applyCommand],
   )
 
-  const onEdgeClick = useCallback(() => {
-    // No-op for now
-  }, [])
+  const onEdgeClick = useCallback(
+    (edgeId: string, additive: boolean) => {
+      applyCommand({ type: 'SelectEdge', payload: { id: edgeId, additive } })
+      setEditorEdgeId(edgeId)
+      setEditorNodeId(null)
+    },
+    [applyCommand],
+  )
 
   const toggleConnectorMode = useCallback(() => {
     setConnectorMode((prev) => !prev)
@@ -326,15 +344,18 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       meta: { dirty: true, version: current.present.meta.version + 1 },
     }))
     setEditorNodeId(null)
+    setEditorEdgeId(null)
     setConnectionStart(null)
   }, [])
 
   const openEditor = useCallback((nodeId: string) => {
     setEditorNodeId(nodeId)
+    setEditorEdgeId(null)
   }, [])
 
   const closeEditor = useCallback(() => {
     setEditorNodeId(null)
+    setEditorEdgeId(null)
   }, [])
 
   const addNodeByType = useCallback((type: ProcessElementType, position?: { x: number; y: number }) => {
@@ -465,6 +486,37 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     [applyCommand],
   )
 
+  type EdgeDataPatch = {
+    label?: string
+    fromRole?: string
+    toRole?: string
+    artifact?: string
+    expectation?: string
+    readinessSignal?: string
+    reviewStatus?: ReviewStatus
+  }
+
+  const updateEdgeData = useCallback(
+    (edgeId: string, data: EdgeDataPatch) => {
+      applyCommand({
+        type: 'UpdateEdge',
+        payload: {
+          id: edgeId,
+          patch: {
+            ...(typeof data.label === 'string' ? { label: data.label } : {}),
+            ...(typeof data.fromRole === 'string' ? { fromRole: data.fromRole } : {}),
+            ...(typeof data.toRole === 'string' ? { toRole: data.toRole } : {}),
+            ...(typeof data.artifact === 'string' ? { artifact: data.artifact } : {}),
+            ...(typeof data.expectation === 'string' ? { expectation: data.expectation } : {}),
+            ...(typeof data.readinessSignal === 'string' ? { readinessSignal: data.readinessSignal } : {}),
+            ...(isReviewStatus(data.reviewStatus) ? { reviewStatus: data.reviewStatus } : {}),
+          },
+        },
+      })
+    },
+    [applyCommand],
+  )
+
   const moveSelectedNodes = useCallback(
     (dx: number, dy: number) => {
       // Read from the synchronous shadow ref so that moves triggered by
@@ -484,11 +536,13 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const undoAction = useCallback(() => {
     setHistory((current) => undo(current))
     setEditorNodeId(null)
+    setEditorEdgeId(null)
   }, [])
 
   const redoAction = useCallback(() => {
     setHistory((current) => redo(current))
     setEditorNodeId(null)
+    setEditorEdgeId(null)
   }, [])
 
   const autoLayout = useCallback(async () => {
@@ -640,7 +694,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     edges,
     selectedNode,
     selectedNodeIds,
+    selectedEdgeIds,
+    selectedEdge,
     editorNode,
+    editorEdge,
     marquee,
     connectorMode,
     connectionStart,
@@ -668,6 +725,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     quickCreate,
     removeSelected,
     updateNodeData,
+    updateEdgeData,
     moveSelectedNodes,
     undo: undoAction,
     redo: redoAction,

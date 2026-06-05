@@ -1,6 +1,12 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
+export interface DrawEdgesOptions {
+  selected?: boolean
+  selectedEdgeIds?: Set<string>
+  onEdgeClick?: (edgeId: string, event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
+}
+
 function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {
   const port = node.ports.find((p) => p.id === portId)
   const side = port?.side ?? 'bottom'
@@ -18,12 +24,68 @@ function getPortPosition(node: GraphNode, portId: string): { x: number; y: numbe
   }
 }
 
+/**
+ * Compute the two arrowhead endpoints that the renderer uses to cap an edge
+ * with a small triangle. Exported so the arrow placement can be unit-tested
+ * without spinning up a Pixi stage.
+ */
+export function getArrowPoints(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  cp2: { x: number; y: number },
+  size = 8,
+): { arrow1: { x: number; y: number }; arrow2: { x: number; y: number } } {
+  const angle = Math.atan2(to.y - cp2.y, to.x - cp2.x)
+  return {
+    arrow1: {
+      x: to.x - size * Math.cos(angle - Math.PI / 6),
+      y: to.y - size * Math.sin(angle - Math.PI / 6),
+    },
+    arrow2: {
+      x: to.x - size * Math.cos(angle + Math.PI / 6),
+      y: to.y - size * Math.sin(angle + Math.PI / 6),
+    },
+  }
+}
+
+const EDGE_STROKE = 0xc4c4c6
+const EDGE_WIDTH = 1.5
+const EDGE_SELECTED_STROKE = 0x0071e3
+const EDGE_SELECTED_WIDTH = 2.5
+const EDGE_HIT_WIDTH = 12
+
+function drawRoute(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number } = {}): void {
+  const color = options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE
+  const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
+  graphics.stroke({ color, width })
+  graphics.moveTo(points.from.x, points.from.y)
+  graphics.bezierCurveTo(points.cp1.x, points.cp1.y, points.cp2.x, points.cp2.y, points.to.x, points.to.y)
+}
+
+function drawArrow(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number } = {}): void {
+  const color = options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE
+  const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
+  const { arrow1, arrow2 } = getArrowPoints(points.from, points.to, points.cp2)
+  graphics.stroke({ color, width })
+  graphics.moveTo(points.to.x, points.to.y)
+  graphics.lineTo(arrow1.x, arrow1.y)
+  graphics.moveTo(points.to.x, points.to.y)
+  graphics.lineTo(arrow2.x, arrow2.y)
+}
+
 export function drawEdges(
   layer: Container,
   edges: GraphEdge[],
   nodesById: Map<string, GraphNode>,
-  selectedEdgeId: string | null,
+  optionsOrSelected: DrawEdgesOptions | string | null = null,
 ): void {
+  // Back-compat: prior callers passed a single edge id or null as the fourth
+  // argument. Accept that shape and translate it to the new options object.
+  const options: DrawEdgesOptions =
+    optionsOrSelected === null || typeof optionsOrSelected === 'string'
+      ? (optionsOrSelected ? { selectedEdgeIds: new Set([optionsOrSelected]) } : {})
+      : optionsOrSelected
+
   layer.removeChildren()
 
   for (const edge of edges) {
@@ -34,42 +96,40 @@ export function drawEdges(
     const from = getPortPosition(source, edge.sourcePortId)
     const to = getPortPosition(target, edge.targetPortId)
 
-    const selected = edge.id === selectedEdgeId
+    const selected = options.selectedEdgeIds?.has(edge.id) ?? false
+    const points = {
+      from,
+      to,
+      cp1: { x: from.x + (to.x - from.x) * 0.25, y: from.y },
+      cp2: { x: from.x + (to.x - from.x) * 0.75, y: to.y },
+    }
 
+    // Visible curve and arrow
     const curve = new Graphics()
-    curve.stroke({ color: selected ? 0x0071e3 : 0xc4c4c6, width: selected ? 2.5 : 1.5 })
+    curve.label = `edge:${edge.id}`
+    ;(curve as Graphics & { eventMode?: string }).eventMode = 'none'
+    drawRoute(curve, points, { ...options, selected })
+    drawArrow(curve, points, { ...options, selected })
+    layer.addChild(curve)
 
-    const cp1x = from.x + (to.x - from.x) * 0.25
-    const cp1y = from.y
-    const cp2x = from.x + (to.x - from.x) * 0.75
-    const cp2y = to.y
-
-    curve.moveTo(from.x, from.y)
-    curve.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, to.x, to.y)
-
-    // Draw arrowhead
-    const arrowSize = 8
-    const angle = Math.atan2(to.y - cp2y, to.x - cp2x)
-    const arrow1X = to.x - arrowSize * Math.cos(angle - Math.PI / 6)
-    const arrow1Y = to.y - arrowSize * Math.sin(angle - Math.PI / 6)
-    const arrow2X = to.x - arrowSize * Math.cos(angle + Math.PI / 6)
-    const arrow2Y = to.y - arrowSize * Math.sin(angle + Math.PI / 6)
-
-    curve.moveTo(to.x, to.y)
-    curve.lineTo(arrow1X, arrow1Y)
-    curve.moveTo(to.x, to.y)
-    curve.lineTo(arrow2X, arrow2Y)
-
-    // Hit area for edge selection
+    // Wider hit area on top so the curve never blocks pointer events.
+    // The hit area is invisible (alpha 0) but still receives Pixi events.
     const hit = new Graphics()
-    hit.stroke({ color: 0x000000, alpha: 0, width: 12 })
-    hit.moveTo(from.x, from.y)
-    hit.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, to.x, to.y)
-    hit.label = edge.id
+    hit.label = `edge-hit:${edge.id}`
     ;(hit as Graphics & { eventMode?: string; cursor?: string }).eventMode = 'static'
     ;(hit as Graphics & { eventMode?: string; cursor?: string }).cursor = 'pointer'
-
-    layer.addChild(curve)
+    drawRoute(hit, points, { ...options, widthOverride: EDGE_HIT_WIDTH })
+    drawArrow(hit, points, { ...options, widthOverride: EDGE_HIT_WIDTH })
+    hit.alpha = 0.001
+    if (options.onEdgeClick) {
+      hit.on('pointertap', (event) => {
+        options.onEdgeClick?.(edge.id, {
+          shiftKey: event.shiftKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+        })
+      })
+    }
     layer.addChild(hit)
 
     if (edge.label) {

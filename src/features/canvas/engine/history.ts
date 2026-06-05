@@ -47,3 +47,15 @@ export function redo<T>(state: HistoryState<T>): HistoryState<T> {
     future: state.future.slice(1),
   }
 }
+
+/**
+ * Replace `present` without pushing the prior value onto `past`. Used for
+ * pure viewport / selection updates where the new state is fully derivable
+ * from the old one and we do not want to bloat the undo stack.
+ */
+export function setPresent<T>(state: HistoryState<T>, next: T): HistoryState<T> {
+  return {
+    ...state,
+    present: next,
+  }
+}

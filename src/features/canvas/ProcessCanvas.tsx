@@ -265,7 +265,12 @@ export function ProcessCanvas() {
         hitArea.fill({ color: 0x000000, alpha: 0.001 })
 
         drawGrid(layers.gridLayer, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
-        drawEdges(layers.edgeLayer, graphEdges, nodesById, null)
+        drawEdges(layers.edgeLayer, graphEdges, nodesById, {
+          selectedEdgeIds: canvas.selectedEdgeIds,
+          onEdgeClick: (edgeId, event) => {
+            canvas.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
+          },
+        })
         drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
 
         // Attach events to nodes and ports
@@ -495,8 +500,9 @@ export function ProcessCanvas() {
 
       <PropertiesPanel
         node={canvas.editorNode}
-        edge={null}
+        edge={canvas.editorEdge}
         onUpdateNode={canvas.updateNodeData}
+        onUpdateEdge={canvas.updateEdgeData}
         onClose={() => canvas.closeEditor()}
       />
     </div>

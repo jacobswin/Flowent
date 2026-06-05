@@ -47,7 +47,7 @@ function makeBottleneck(): ProcessNode {
 describe('PropertiesPanel — semantic editors', () => {
   it('edits stage process semantics', () => {
     const onUpdate = vi.fn()
-    render(<PropertiesPanel node={makeStage()} edge={null} onUpdateNode={onUpdate} onClose={() => {}} />)
+    render(<PropertiesPanel node={makeStage()} edge={null} onUpdateNode={onUpdate} onUpdateEdge={() => {}} onClose={() => {}} />)
 
     const goal = screen.getByLabelText('Goal')
     fireEvent.change(goal, { target: { value: 'Align on validated direction' } })
@@ -58,7 +58,7 @@ describe('PropertiesPanel — semantic editors', () => {
 
   it('edits bottleneck review status', () => {
     const onUpdate = vi.fn()
-    render(<PropertiesPanel node={makeBottleneck()} edge={null} onUpdateNode={onUpdate} onClose={() => {}} />)
+    render(<PropertiesPanel node={makeBottleneck()} edge={null} onUpdateNode={onUpdate} onUpdateEdge={() => {}} onClose={() => {}} />)
 
     fireEvent.change(screen.getByLabelText('Review status'), { target: { value: 'needs-owner' } })
 
@@ -67,12 +67,47 @@ describe('PropertiesPanel — semantic editors', () => {
 
   it('edits activity expectations', () => {
     const onUpdate = vi.fn()
-    render(<PropertiesPanel node={makeActivity()} edge={null} onUpdateNode={onUpdate} onClose={() => {}} />)
+    render(<PropertiesPanel node={makeActivity()} edge={null} onUpdateNode={onUpdate} onUpdateEdge={() => {}} onClose={() => {}} />)
 
     const expectations = screen.getByLabelText('Expectations')
     fireEvent.change(expectations, { target: { value: 'Ready when scope and owner are clear' } })
     fireEvent.blur(expectations)
 
     expect(onUpdate).toHaveBeenCalledWith('a1', { expectations: 'Ready when scope and owner are clear' })
+  })
+
+  it('edits handoff expectation from the edge panel', () => {
+    const onUpdateEdge = vi.fn()
+    render(
+      <PropertiesPanel
+        node={null}
+        edge={{
+          id: 'edge-1',
+          type: 'handoff',
+          source: 'a',
+          target: 'b',
+          data: {
+            label: '',
+            fromRole: 'PM',
+            toRole: 'Engineer',
+            artifact: 'Ready brief',
+            expectation: '',
+            readinessSignal: '',
+            reviewStatus: 'unclear',
+          },
+        }}
+        onUpdateNode={() => {}}
+        onUpdateEdge={onUpdateEdge}
+        onClose={() => {}}
+      />,
+    )
+
+    const expectation = screen.getByLabelText('Handoff expectation')
+    fireEvent.change(expectation, { target: { value: 'Ready work includes context and acceptance expectations.' } })
+    fireEvent.blur(expectation)
+
+    expect(onUpdateEdge).toHaveBeenCalledWith('edge-1', {
+      expectation: 'Ready work includes context and acceptance expectations.',
+    })
   })
 })

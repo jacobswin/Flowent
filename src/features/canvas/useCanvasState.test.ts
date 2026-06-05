@@ -207,4 +207,18 @@ describe('useCanvasState', () => {
     expect(result.current.nodes.some((node) => node.data.kind === 'stage')).toBe(true)
     expect(result.current.nodes.some((node) => node.data.kind === 'bottleneck')).toBe(true)
   })
+
+  it('selects and updates a handoff edge by id', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 120, y: 160 }))
+    act(() => result.current.onConnect('start', result.current.nodes.find((node) => node.data.kind === 'activity')!.id, 'out', 'in'))
+
+    const edge = result.current.edges[0]
+    act(() => result.current.onEdgeClick(edge.id, false))
+    act(() => result.current.updateEdgeData(edge.id, { expectation: 'Context moves with the work.' }))
+
+    expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
+    expect(result.current.editorEdge?.data?.expectation).toBe('Context moves with the work.')
+  })
 })

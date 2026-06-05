@@ -83,6 +83,50 @@ export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocu
         },
       }
     }
+    case 'UpdateEdge': {
+      const edge = doc.edges.get(command.payload.id)
+      if (!edge) {
+        return doc
+      }
+
+      const edges = new Map(doc.edges)
+      edges.set(edge.id, {
+        ...edge,
+        ...command.payload.patch,
+      })
+
+      return {
+        ...doc,
+        edges,
+        meta: {
+          dirty: true,
+          version: doc.meta.version + 1,
+        },
+      }
+    }
+    case 'SelectEdge': {
+      const selectedEdgeIds = new Set(doc.selectedEdgeIds)
+      if (command.payload.additive) {
+        if (selectedEdgeIds.has(command.payload.id)) {
+          selectedEdgeIds.delete(command.payload.id)
+        } else {
+          selectedEdgeIds.add(command.payload.id)
+        }
+      } else {
+        selectedEdgeIds.clear()
+        selectedEdgeIds.add(command.payload.id)
+      }
+
+      return {
+        ...doc,
+        selectedNodeIds: command.payload.additive ? doc.selectedNodeIds : new Set(),
+        selectedEdgeIds,
+        meta: {
+          dirty: true,
+          version: doc.meta.version + 1,
+        },
+      }
+    }
     default:
       return doc
   }

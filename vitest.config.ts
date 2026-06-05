@@ -7,7 +7,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    // PIXI's WebGL init under jsdom + the dynamic import of the canvas
+    // chunk is slow; bump the default test timeout to keep the App-level
+    // smoke test reliable.
+    testTimeout: 15000,
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**', '.claude/worktrees/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

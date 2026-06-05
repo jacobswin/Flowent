@@ -12,6 +12,7 @@ import { drawNodes } from './render/drawNodes'
 import { drawEdges } from './render/drawEdges'
 import { mapKeyToAction } from './engine/keyboard'
 import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
+import { FocusBar } from './FocusBar'
 
 export function ProcessCanvas() {
   const canvas = useCanvasState()
@@ -267,11 +268,14 @@ export function ProcessCanvas() {
         drawGrid(layers.gridLayer, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
         drawEdges(layers.edgeLayer, graphEdges, nodesById, {
           selectedEdgeIds: canvas.selectedEdgeIds,
+          dimmedEdgeIds: canvas.focusView.dimmedEdgeIds,
           onEdgeClick: (edgeId, event) => {
             canvas.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
           },
         })
-        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
+        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds, {
+          dimmedNodeIds: canvas.focusView.dimmedNodeIds,
+        })
 
         // Attach events to nodes and ports
         for (const child of layers.nodeLayer.children) {
@@ -473,6 +477,8 @@ export function ProcessCanvas() {
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       />
+
+      <FocusBar focus={canvas.focus} roles={canvas.roles} onChange={canvas.setFocus} />
 
       <div className="keyboard-hint" aria-hidden="true">
         <span><kbd>A</kbd> Activity</span>

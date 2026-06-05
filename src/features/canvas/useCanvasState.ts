@@ -14,6 +14,7 @@ import { planQuickCreate } from './engine/quickCreate'
 import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
+import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focus/processFocus'
 
 function toProcessNode(node: GraphNode): ProcessNode {
   if (node.type === 'activity') {
@@ -218,8 +219,12 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const [connectorMode, setConnectorMode] = useState(false)
   const [connectionStart, setConnectionStart] = useState<{ nodeId: string; portId: string } | null>(null)
+  const [focus, setFocus] = useState<ProcessFocusState>({ mode: 'all' })
 
   const document = history.present
+
+  const focusView = useMemo(() => deriveProcessFocus(document, focus), [document, focus])
+  const roles = useMemo(() => collectRoles(document), [document])
 
   const nodes = useMemo(() => Array.from(document.nodes.values()).map(toProcessNode), [document])
   const edges = useMemo(() => Array.from(document.edges.values()).map(toProcessEdge), [document])
@@ -723,6 +728,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     addStage,
     addBottleneck,
     quickCreate,
+    focus,
+    setFocus,
+    focusView,
+    roles,
     removeSelected,
     updateNodeData,
     updateEdgeData,

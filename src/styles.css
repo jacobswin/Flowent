@@ -893,3 +893,51 @@ textarea {
   font-size: 0.72rem;
   line-height: 1.25;
 }
+
+/* ===== Focus bar ===== */
+
+.focus-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 54px;
+  z-index: 8;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  transform: translateX(-50%);
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.focus-bar button,
+.focus-bar select {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.focus-bar button {
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.focus-bar button.active {
+  background: var(--text);
+  color: white;
+}
+
+.focus-bar label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

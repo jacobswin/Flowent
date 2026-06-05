@@ -2,8 +2,10 @@ import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
 export interface DrawEdgesOptions {
+  preview?: boolean
   selected?: boolean
   selectedEdgeIds?: Set<string>
+  dimmedEdgeIds?: Set<string>
   onEdgeClick?: (edgeId: string, event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
 }
 
@@ -97,6 +99,7 @@ export function drawEdges(
     const to = getPortPosition(target, edge.targetPortId)
 
     const selected = options.selectedEdgeIds?.has(edge.id) ?? false
+    const dimmed = options.dimmedEdgeIds?.has(edge.id) ?? false
     const points = {
       from,
       to,
@@ -108,6 +111,7 @@ export function drawEdges(
     const curve = new Graphics()
     curve.label = `edge:${edge.id}`
     ;(curve as Graphics & { eventMode?: string }).eventMode = 'none'
+    curve.alpha = dimmed ? 0.22 : 1
     drawRoute(curve, points, { ...options, selected })
     drawArrow(curve, points, { ...options, selected })
     layer.addChild(curve)

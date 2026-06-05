@@ -1,13 +1,24 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphNode } from '../canvasTypes'
 
-export function drawNodes(layer: Container, nodes: GraphNode[], selectedNodeIds: Set<string>): void {
+export interface DrawNodesOptions {
+  dimmedNodeIds?: Set<string>
+}
+
+export function drawNodes(
+  layer: Container,
+  nodes: GraphNode[],
+  selectedNodeIds: Set<string>,
+  options: DrawNodesOptions = {},
+): void {
   layer.removeChildren()
 
   for (const node of nodes) {
     const container = new Container()
     container.x = node.x
     container.y = node.y
+    const dimmed = options.dimmedNodeIds?.has(node.id) ?? false
+    container.alpha = dimmed ? 0.28 : 1
 
     const selected = selectedNodeIds.has(node.id)
 

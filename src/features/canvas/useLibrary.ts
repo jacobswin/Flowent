@@ -24,6 +24,7 @@ interface UseLibraryResult {
   deleteFolder: (id: string) => Promise<void>
   moveFolder: (id: string, parentId: string | null) => Promise<void>
   saveMapDocument: (mapId: string, document: SavedMap['document']) => Promise<void>
+  saveMapActivation: (mapId: string, activation: NonNullable<SavedMap['activation']>) => Promise<void>
   reload: () => Promise<void>
 }
 
@@ -264,6 +265,24 @@ export function useLibrary(): UseLibraryResult {
     [run],
   )
 
+  const saveMapActivation = useCallback(
+    async (mapId: string, activation: NonNullable<SavedMap['activation']>) => {
+      await run('saveMapActivation', async () => {
+        const res = await fetch(`/api/library/maps/${mapId}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ activation }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      })
+      setLibrary((lib) => ({
+        ...lib,
+        maps: lib.maps.map((m) => (m.id === mapId ? { ...m, activation, updatedAt: Date.now() } : m)),
+      }))
+    },
+    [run],
+  )
+
   return {
     library,
     loading,
@@ -279,6 +298,7 @@ export function useLibrary(): UseLibraryResult {
     deleteFolder,
     moveFolder,
     saveMapDocument,
+    saveMapActivation,
     reload,
   }
 }

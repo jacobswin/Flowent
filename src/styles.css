@@ -1024,3 +1024,90 @@ textarea {
   font-size: 0.74rem;
   line-height: 1.35;
 }
+
+/* ===== Activation bar ===== */
+
+.activation-bar {
+  position: absolute;
+  left: 18px;
+  bottom: 98px;
+  z-index: 8;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.activation-bar-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activation-bar-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.activation-bar-status strong {
+  font-size: 0.84rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+
+.activation-bar-activated strong {
+  color: color-mix(in srgb, #16a34a 70%, var(--text));
+}
+
+.activation-bar-stale strong {
+  color: color-mix(in srgb, #f97316 70%, var(--text));
+}
+
+.activation-bar-meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.activation-bar-reasons {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+.activation-bar-activate {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, opacity 160ms ease;
+}
+
+.activation-bar-activate:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-hover, #1d4ed8) 80%, var(--accent));
+}
+
+.activation-bar-activate:disabled {
+  background: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--muted);
+  cursor: not-allowed;
+}

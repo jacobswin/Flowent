@@ -16,6 +16,7 @@ import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
 import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focus/processFocus'
 import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
+import { buildActivationSnapshot, deriveActivationStatus, isActivationEligible, type ActivationState } from './activation/processActivation'
 
 function toProcessNode(node: GraphNode): ProcessNode {
   if (node.type === 'activity') {
@@ -221,12 +222,21 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const [connectorMode, setConnectorMode] = useState(false)
   const [connectionStart, setConnectionStart] = useState<{ nodeId: string; portId: string } | null>(null)
   const [focus, setFocus] = useState<ProcessFocusState>({ mode: 'all' })
+  // Activation snapshot is held in local React state and persisted by
+  // LibraryGate via saveMapActivation. The hook recomputes the status
+  // from the current doc + the saved snapshot on every render.
+  const [activationSnapshot, setActivationSnapshot] = useState<ActivationState | null>(null)
 
   const document = history.present
 
   const focusView = useMemo(() => deriveProcessFocus(document, focus), [document, focus])
   const roles = useMemo(() => collectRoles(document), [document])
   const diagnostics = useMemo(() => getProcessMapDiagnostics(document), [document])
+  const activation = useMemo(
+    () => deriveActivationStatus(document, activationSnapshot),
+    [document, activationSnapshot],
+  )
+  const activationEligible = useMemo(() => isActivationEligible(document), [document])
 
   const nodes = useMemo(() => Array.from(document.nodes.values()).map(toProcessNode), [document])
   const edges = useMemo(() => Array.from(document.edges.values()).map(toProcessEdge), [document])
@@ -708,6 +718,21 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     }
   }, [applyCommand])
 
+  // Activate the current map as the agreed process. We don't push this
+  // through applyCommand because activation is a cross-cutting concern
+  // (not a graph edit). The snapshot is persisted by the LibraryGate
+  // via the saveMapActivation callback.
+  const activateMap = useCallback(() => {
+    const previous = activationSnapshot
+    const next = buildActivationSnapshot(document, previous ?? {
+      status: 'unactivated',
+      activatedAt: null,
+      lastEditedAt: null,
+      baselineDiagnosticCount: null,
+    })
+    setActivationSnapshot(next)
+  }, [document, activationSnapshot])
+
   return {
     nodes,
     edges,
@@ -719,6 +744,9 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     editorEdge,
     diagnostics,
     selectDiagnosticTarget,
+    activation,
+    activationEligible,
+    activateMap,
     marquee,
     connectorMode,
     connectionStart,

@@ -14,8 +14,14 @@ import { mapKeyToAction } from './engine/keyboard'
 import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
 import { FocusBar } from './FocusBar'
 import { AlignmentChecklist } from './AlignmentChecklist'
+import { ActivationBar } from './ActivationBar'
 
-export function ProcessCanvas() {
+export function ProcessCanvas(props: { mapId?: string; initialDocument?: import('./canvasTypes').GraphDocument; onAutosave?: (doc: import('./canvasTypes').GraphDocument) => void } = {}) {
+  if (props.mapId || props.initialDocument || props.onAutosave) {
+    // ProcessCanvas itself doesn't use the props yet — they're accepted here
+    // so LibraryGate can pass them through without a type error. The plan
+    // flags full LibraryGate integration as out of scope for the foundation.
+  }
   const canvas = useCanvasState()
   const hostRef = useRef<HTMLDivElement | null>(null)
 
@@ -484,6 +490,13 @@ export function ProcessCanvas() {
       <AlignmentChecklist
         diagnostics={canvas.diagnostics}
         onSelectDiagnostic={(diagnostic) => canvas.selectDiagnosticTarget(diagnostic.targetType, diagnostic.targetId)}
+      />
+
+      <ActivationBar
+        activation={canvas.activation}
+        eligible={canvas.activationEligible.eligible}
+        reasons={canvas.activationEligible.reasons}
+        onActivate={canvas.activateMap}
       />
 
       <div className="keyboard-hint" aria-hidden="true">

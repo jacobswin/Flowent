@@ -110,4 +110,75 @@ describe('PropertiesPanel — semantic editors', () => {
       expectation: 'Ready work includes context and acceptance expectations.',
     })
   })
+
+  it('submits all three activity fields on form submit so the panel does not silently drop expectations', () => {
+    const onUpdate = vi.fn()
+    const { container } = render(
+      <PropertiesPanel
+        node={{
+          id: 'a1',
+          type: 'activity',
+          position: { x: 100, y: 100 },
+          data: {
+            kind: 'activity',
+            title: 'Write spec',
+            summary: 'Draft and review',
+            roleIds: ['PM', 'Designer'],
+            expectations: '',
+          },
+        }}
+        edge={null}
+        onUpdateNode={onUpdate}
+        onUpdateEdge={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    const title = screen.getByLabelText('Title')
+    fireEvent.change(title, { target: { value: 'Write spec v2' } })
+    const expectations = screen.getByLabelText('Expectations')
+    fireEvent.change(expectations, { target: { value: 'Ready when scope is clear' } })
+
+    // Submitting the form (which the user does by pressing Enter on a
+    // single-line input) must persist all three fields.
+    const form = container.querySelector('form') as HTMLFormElement
+    fireEvent.submit(form)
+
+    expect(onUpdate).toHaveBeenCalledWith('a1', {
+      title: 'Write spec v2',
+      summary: 'Draft and review',
+      expectations: 'Ready when scope is clear',
+    })
+  })
+
+  it('renders the bottleneck review status as a human label, not the raw enum', () => {
+    render(
+      <PropertiesPanel
+        node={{
+          id: 'b1',
+          type: 'bottleneck',
+          position: { x: 100, y: 100 },
+          data: {
+            kind: 'bottleneck',
+            title: 'Waiting for review',
+            symptom: '',
+            impact: '',
+            suspectedCause: '',
+            reviewStatus: 'needs-owner',
+          },
+        }}
+        edge={null}
+        onUpdateNode={() => {}}
+        onUpdateEdge={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    const select = screen.getByLabelText('Review status') as HTMLSelectElement
+    // The <select> value is the enum string; the option text is the label.
+    expect(select.value).toBe('needs-owner')
+    const ownerOption = screen.getByRole('option', { name: 'Needs owner' }) as HTMLOptionElement
+    expect(ownerOption.value).toBe('needs-owner')
+    expect(ownerOption.selected).toBe(true)
+  })
 })

@@ -332,11 +332,34 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const onEdgeClick = useCallback(
     (edgeId: string, additive: boolean) => {
+      // Compute the post-command selection without going through the
+      // async setHistory path so we can decide synchronously whether
+      // the click just removed the edge from the selection (shift+click
+      // on an already-selected edge to deselect).
+      const currentSelection = history.present.selectedEdgeIds
+      const isCurrentlySelected = currentSelection.has(edgeId)
+      const nextSelected = new Set(currentSelection)
+      if (additive) {
+        if (isCurrentlySelected) {
+          nextSelected.delete(edgeId)
+        } else {
+          nextSelected.add(edgeId)
+        }
+      } else {
+        nextSelected.clear()
+        nextSelected.add(edgeId)
+      }
       applyCommand({ type: 'SelectEdge', payload: { id: edgeId, additive } })
+
+      if (!nextSelected.has(edgeId)) {
+        setEditorEdgeId(null)
+        setEditorNodeId(null)
+        return
+      }
       setEditorEdgeId(edgeId)
       setEditorNodeId(null)
     },
-    [applyCommand],
+    [applyCommand, history.present.selectedEdgeIds],
   )
 
   const toggleConnectorMode = useCallback(() => {
@@ -469,6 +492,11 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       }
 
       if (next === current.present) return current
+      // The currently-open editor may reference a node or edge that just
+      // got deleted. Close both editors so an undo doesn't re-open a
+      // stale panel for a missing entity.
+      setEditorNodeId(null)
+      setEditorEdgeId(null)
       return pushHistory(current, {
         ...next,
         selectedNodeIds: new Set(),

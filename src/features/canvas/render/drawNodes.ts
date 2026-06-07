@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphNode } from '../canvasTypes'
+import { describeReviewStatus } from '../reviewStatus'
 
 export interface DrawNodesOptions {
   dimmedNodeIds?: Set<string>
@@ -116,7 +117,7 @@ export function drawNodes(
 
     if (node.reviewStatus && node.type === 'bottleneck') {
       const status = new Text({
-        text: node.reviewStatus,
+        text: describeReviewStatus(node.reviewStatus),
         style: {
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',

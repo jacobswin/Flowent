@@ -142,6 +142,51 @@ describe('useCanvasState', () => {
     expect(result.current.editorEdge?.id).toBe(edge.id)
   })
 
+  it('closes the edge editor when shift-clicking an already-selected edge to deselect', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    // Shift-click on the already-selected edge to deselect.
+    act(() => {
+      result.current.onEdgeClick(edge.id, true)
+    })
+
+    expect(result.current.selectedEdgeIds.size).toBe(0)
+    expect(result.current.editorEdge).toBeNull()
+  })
+
+  it('closes the editor when the selected edge is deleted', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+    act(() => result.current.onEdgeClick(edge.id, false))
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    act(() => {
+      result.current.removeSelected()
+    })
+
+    expect(result.current.editorEdge).toBeNull()
+  })
+
   it('updates edge label data by id', () => {
     const { result } = renderHook(() => useCanvasState())
 

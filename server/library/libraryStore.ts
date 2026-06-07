@@ -73,6 +73,13 @@ export const mapSchema = z.object({
   order: z.number().int(),
   document: documentSchema.optional(),
   updatedAt: z.number().int(),
+  activation: z
+    .object({
+      status: z.literal('activated'),
+      activatedAt: z.string(),
+      baselineDiagnosticCount: z.number().int().nonnegative(),
+    })
+    .optional(),
 })
 
 export const librarySchema = z.object({

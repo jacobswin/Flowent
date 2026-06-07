@@ -738,6 +738,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   return {
     nodes,
     edges,
+    document,
     selectedNode,
     selectedNodeIds,
     selectedEdgeIds,

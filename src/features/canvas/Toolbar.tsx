@@ -6,6 +6,7 @@ interface ToolbarProps {
   onAutoLayout: () => void
   onUndo: () => void
   onRedo: () => void
+  onExport: () => void
   canUndo: boolean
   canRedo: boolean
   hasSelection: boolean
@@ -18,6 +19,7 @@ export function Toolbar({
   onAutoLayout,
   onUndo,
   onRedo,
+  onExport,
   canUndo,
   canRedo,
   hasSelection,
@@ -75,6 +77,19 @@ export function Toolbar({
           <path d="M14 7H7a4 4 0 100 8h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M11 4l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
+      </button>
+      <div className="toolbar-divider" />
+      <button
+        type="button"
+        className="toolbar-button"
+        onClick={onExport}
+        title="Export as SVG"
+        aria-label="Export map as SVG"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M9 2v9M9 11l-3-3M9 11l3-3M3 13h12v3H3z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span>Export</span>
       </button>
       {hasSelection && (
         <>

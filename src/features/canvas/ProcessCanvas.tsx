@@ -10,11 +10,13 @@ import { createPixiStage } from './render/pixiStage'
 import { createCanvasLayers, drawGrid } from './render/layers'
 import { drawNodes } from './render/drawNodes'
 import { drawEdges } from './render/drawEdges'
+import { findNearestTargetPort } from './routing/ports'
 import { mapKeyToAction } from './engine/keyboard'
 import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
 import { FocusBar } from './FocusBar'
 import { AlignmentChecklist } from './AlignmentChecklist'
 import { ActivationBar } from './ActivationBar'
+import { exportProcessMapAsSvg, downloadBlob } from './export/processMapExporter'
 
 export function ProcessCanvas(props: { mapId?: string; initialDocument?: import('./canvasTypes').GraphDocument; onAutosave?: (doc: import('./canvasTypes').GraphDocument) => void } = {}) {
   if (props.mapId || props.initialDocument || props.onAutosave) {
@@ -298,6 +300,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
             let portStartX = 0
             let portStartY = 0
             let sourceNodeId = ''
+            const sourcePortId = label.replace('port:', '')
 
             // Find parent node
             const parent = child.parent
@@ -312,7 +315,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
 
               // Start connection in connector mode
               if (canvas.connectorMode) {
-                canvas.startConnection(sourceNodeId, label.replace('port:', ''))
+                canvas.startConnection(sourceNodeId, sourcePortId)
               }
             })
 
@@ -355,12 +358,13 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
               )
 
               if (targetNode) {
-                canvas.onConnect(sourceNodeId, targetNode.id)
-              }
-
-              // End connection if in connector mode
-              if (canvas.connectorMode && canvas.connectionStart) {
-                canvas.endConnection(targetNode?.id ?? sourceNodeId)
+                const worldX = (event.globalX - canvas.viewport.x) / canvas.viewport.zoom
+                const worldY = (event.globalY - canvas.viewport.y) / canvas.viewport.zoom
+                const targetPort = findNearestTargetPort(targetNode, { x: worldX, y: worldY })
+                const targetPortId = targetPort?.id ?? 'in'
+                canvas.onConnect(sourceNodeId, targetNode.id, sourcePortId, targetPortId)
+              } else if (canvas.connectorMode && canvas.connectionStart) {
+                canvas.endConnection(sourceNodeId, 'in')
               }
             })
 
@@ -468,6 +472,15 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         onAutoLayout={() => canvas.autoLayout()}
         onUndo={canvas.undo}
         onRedo={canvas.redo}
+        onExport={() => {
+          // Export the current canvas document. The exporter walks the
+          // Pixi-independent GraphDocument and returns a self-contained
+          // SVG. The download is browser-only.
+          const svg = exportProcessMapAsSvg(canvas.document)
+          if (typeof document === 'undefined') return
+          const filename = `flowent-process-map-${Date.now()}.svg`
+          downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), filename)
+        }}
         canUndo={canvas.canUndo}
         canRedo={canvas.canRedo}
         hasSelection={canvas.selectedNodeIds.size > 0}

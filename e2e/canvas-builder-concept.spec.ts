@@ -44,3 +44,23 @@ test('focus bar exposes decision and bottleneck readability modes', async ({ pag
   await page.getByRole('button', { name: 'Bottlenecks' }).click()
   await expect(page.getByRole('button', { name: 'Bottlenecks' })).toHaveClass(/active/)
 })
+
+test('export button triggers an SVG download of the current map', async ({ page }) => {
+  // Intercept downloads so the test doesn't actually save a file to disk.
+  const downloadPromise = page.waitForEvent('download', { timeout: 5000 })
+
+  await page.getByRole('button', { name: /export map as svg/i }).click()
+
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/^flowent-process-map-.*\.svg$/)
+
+  // Validate the downloaded SVG payload is well-formed.
+  const path = await download.path()
+  if (path) {
+    const fs = await import('node:fs/promises')
+    const svg = await fs.readFile(path, 'utf8')
+    expect(svg.startsWith('<?xml')).toBe(true)
+    expect(svg).toContain('<svg')
+    expect(svg).toContain('</svg>')
+  }
+})

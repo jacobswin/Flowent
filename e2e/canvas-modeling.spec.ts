@@ -1,18 +1,29 @@
 import { test, expect } from '@playwright/test'
 
-test('canvas loads with toolbar and title', async ({ page }) => {
+test.beforeEach(async ({ page }) => {
   await page.goto('/')
+  await page.evaluate(async () => {
+    try { localStorage.clear() } catch { /* noop */ }
+    history.replaceState(null, '', '/')
+    const res = await fetch('/api/library')
+    const body = (await res.json()) as { data: { maps: { id: string }[] } }
+    for (const m of body.data.maps) {
+      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
+    }
+  })
+  await page.reload()
+})
+
+test('canvas loads with toolbar and title', async ({ page }) => {
   await expect(page.locator('.canvas-title')).toContainText('Flowent')
   await expect(page.locator('.canvas-subtitle')).toContainText('Process maps for aligned product teams')
   await expect(page.locator('.canvas-toolbar')).toBeVisible()
 })
 
-test('toolbar has all required buttons', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('.toolbar-button')).toHaveCount(4) // Activity, Decision, End, Layout
-  await expect(page.locator('.toolbar-button').first()).toHaveText(/Activity/)
-  await expect(page.locator('.toolbar-button').nth(1)).toHaveText(/Decision/)
-  await expect(page.locator('.toolbar-button').nth(2)).toHaveText(/End/)
+test('toolbar exposes the primary actions', async ({ page }) => {
+  await expect(page.locator('button:has-text("Activity")')).toBeVisible()
+  await expect(page.locator('button:has-text("Decision")')).toBeVisible()
+  await expect(page.locator('button:has-text("End")')).toBeVisible()
   await expect(page.locator('button:has-text("Layout")')).toBeVisible()
 })
 

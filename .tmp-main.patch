@@ -1,0 +1,1167 @@
+diff --git a/src/features/canvas/ProcessCanvas.tsx b/src/features/canvas/ProcessCanvas.tsx
+index 0b3ad63..ab7bc9d 100644
+--- a/src/features/canvas/ProcessCanvas.tsx
++++ b/src/features/canvas/ProcessCanvas.tsx
+@@ -1,22 +1,32 @@
+ import { useCallback, useEffect, useMemo, useRef } from 'react'
+-import type { FederatedPointerEvent } from 'pixi.js'
+-import { Graphics } from 'pixi.js'
+-import type { ProcessNode } from './canvasTypes'
++import type { FederatedPointerEvent, Graphics as PixiGraphics } from 'pixi.js'
++import { Container, Graphics, Rectangle } from 'pixi.js'
++import type { GraphDocument, GraphNode, ProcessNode } from './canvasTypes'
+ import { Toolbar } from './Toolbar'
+ import { PropertiesPanel } from './PropertiesPanel'
+ import { useCanvasState } from './useCanvasState'
+ import { createPixiStage } from './render/pixiStage'
+ import { createCanvasLayers, drawGrid } from './render/layers'
++import { drawEdges, type RoutedEdgeView } from './render/drawEdges'
+ import { drawNodes } from './render/drawNodes'
+-import { drawEdges } from './render/drawEdges'
+ import { mapKeyToAction } from './engine/keyboard'
++import { routeOrthogonalEdge, type RoutePoint } from './routing/orthogonalRouter'
++import { getPortAnchor } from './routing/ports'
+ 
+-export function ProcessCanvas() {
+-  const canvas = useCanvasState()
++interface ProcessCanvasProps {
++  mapId?: string
++  initialDocument?: GraphDocument
++  onAutosave?: (doc: GraphDocument) => void
++}
++
++export function ProcessCanvas(props: ProcessCanvasProps = {}) {
++  const canvas = useCanvasState({ initialDocument: props.initialDocument, onAutosave: props.onAutosave })
+   const hostRef = useRef<HTMLDivElement | null>(null)
+ 
+   const handleKeyDown = useCallback(
+     (event: KeyboardEvent) => {
++      if (isEditableShortcutTarget(event.target)) return
++
+       const action = mapKeyToAction({
+         key: event.key,
+         metaKey: event.metaKey,
+@@ -39,7 +49,6 @@ export function ProcessCanvas() {
+           canvas.addEnd()
+           break
+         case 'tool-connector':
+-          // Toggle connector mode indicator
+           canvas.toggleConnectorMode()
+           break
+         case 'auto-layout':
+@@ -81,14 +90,14 @@ export function ProcessCanvas() {
+   const graphEdges = useMemo(
+     () =>
+       canvas.edges
+-        .filter((e) => e.source && e.target)
+-        .map((e) => ({
+-          id: e.id,
+-          sourceNodeId: e.source,
+-          sourcePortId: e.sourceHandle ?? 'out',
+-          targetNodeId: e.target,
+-          targetPortId: e.targetHandle ?? 'in',
+-          label: e.data?.label ?? '',
++        .filter((edge) => edge.source && edge.target)
++        .map((edge) => ({
++          id: edge.id,
++          sourceNodeId: edge.source,
++          sourcePortId: edge.sourceHandle ?? 'out',
++          targetNodeId: edge.target,
++          targetPortId: edge.targetHandle ?? 'in',
++          label: edge.data?.label ?? '',
+         })),
+     [canvas.edges],
+   )
+@@ -101,12 +110,35 @@ export function ProcessCanvas() {
+     return map
+   }, [graphNodes])
+ 
++  const canvasRef = useRef(canvas)
++  const graphNodesRef = useRef(graphNodes)
++  const graphEdgesRef = useRef(graphEdges)
++  const nodesByIdRef = useRef(nodesById)
++
++  useEffect(() => {
++    canvasRef.current = canvas
++    graphNodesRef.current = graphNodes
++    graphEdgesRef.current = graphEdges
++    nodesByIdRef.current = nodesById
++  })
++
+   useEffect(() => {
+     const host = hostRef.current
+     if (!host) return
+ 
+     let disposed = false
+-    let destroy: (() => void) | null = null
++    let destroyFn: (() => void) | null = null
++
++    // Shared mutable state for the node-drag gesture. Lives outside the
++    // useEffect closure so that StrictMode's double-invocation (mount →
++    // unmount → remount) can't give listeners a stale copy of these fields.
++    const dragState: { active: boolean; lastX: number; lastY: number } = {
++      active: false,
++      lastX: 0,
++      lastY: 0,
++    }
++    let dragCanvasX = 0
++    let dragCanvasY = 0
+ 
+     const run = async () => {
+       const stage = await createPixiStage(host)
+@@ -115,9 +147,33 @@ export function ProcessCanvas() {
+         return
+       }
+ 
+-      destroy = stage.destroy
+-
+       const layers = createCanvasLayers(stage.root)
++      const previewEdgeLayer = new Container()
++      previewEdgeLayer.label = 'preview-connection-layer'
++      layers.overlayLayer.addChild(previewEdgeLayer)
++
++      // Expose minimal local-only test hooks so e2e can read live positions
++      // and routes without coupling to internal React state.
++      if (shouldExposeCanvasTestHooks()) {
++        ;(window as unknown as { __flowentGetNodePosition?: (id: string) => { x: number; y: number } | null }).__flowentGetNodePosition = (id: string) => {
++          const node = graphNodesRef.current.find((candidate) => candidate.id === id)
++          return node ? { x: node.x, y: node.y } : null
++        }
++        ;(window as unknown as { __flowentGetNodePositions?: () => Record<string, { x: number; y: number }> }).__flowentGetNodePositions = () => {
++          const positions: Record<string, { x: number; y: number }> = {}
++          for (const node of graphNodesRef.current) {
++            positions[node.id] = { x: node.x, y: node.y }
++          }
++          return positions
++        }
++        ;(window as unknown as { __flowentGetEdgeRoutes?: () => Record<string, RoutePoint[]> }).__flowentGetEdgeRoutes = () => {
++          const routes: Record<string, RoutePoint[]> = {}
++          for (const edge of buildRoutedEdges(graphEdgesRef.current, nodesByIdRef.current)) {
++            routes[edge.id] = edge.points
++          }
++          return routes
++        }
++      }
+ 
+       let lastClickTime = 0
+       let lastClickNodeId: string | null = null
+@@ -125,276 +181,429 @@ export function ProcessCanvas() {
+       let marqueeStartX = 0
+       let marqueeStartY = 0
+ 
+-      // Marquee rectangle graphics
++      // Drag state is held on `dragState` declared outside the useEffect so
++      // that StrictMode's double-invocation shares one mutable record.
++
+       const marqueeRect = new Graphics()
+       marqueeRect.visible = false
+       layers.overlayLayer.addChild(marqueeRect)
+ 
+-      // Handle marquee on canvas background
+-      const hitArea = new Graphics()
+-      hitArea.rect(0, 0, host.clientWidth, host.clientHeight)
+-      hitArea.fill({ color: 0x000000, alpha: 0.001 }) // Nearly invisible hit area
+-      hitArea.eventMode = 'static'
+-      hitArea.cursor = 'default'
+-      layers.overlayLayer.addChild(hitArea)
+-
+       let isPanning = false
+       let panStartX = 0
+       let panStartY = 0
+       let spaceDown = false
+ 
+-      window.addEventListener('keydown', (e) => {
+-        if (e.code === 'Space' && !e.repeat) {
++      const onKeyDown = (event: KeyboardEvent) => {
++        if (event.code === 'Space' && !event.repeat) {
+           spaceDown = true
+-          hitArea.cursor = 'grab'
+         }
+-      })
++      }
+ 
+-      window.addEventListener('keyup', (e) => {
+-        if (e.code === 'Space') {
++      const onKeyUp = (event: KeyboardEvent) => {
++        if (event.code === 'Space') {
+           spaceDown = false
+-          hitArea.cursor = 'default'
+         }
+-      })
++      }
++
++      window.addEventListener('keydown', onKeyDown)
++      window.addEventListener('keyup', onKeyUp)
+ 
+-      hitArea.on('pointerdown', (event: FederatedPointerEvent) => {
++      // Use the Pixi canvas reference (PIXI appended it to `host`) instead of
++      // `host.querySelector('canvas')` — the latter races with the async PIXI
++      // init and returns null in the first synchronous pass of this effect,
++      // which then exits early and never attaches any of the native pointer /
++      // wheel listeners below.
++      const pixiCanvasEl = stage.app.canvas as HTMLCanvasElement
++
++      const onCanvasPointerDown = (event: PointerEvent) => {
++        const currentCanvas = canvasRef.current
+         if (spaceDown) {
+           isPanning = true
+-          panStartX = event.globalX
+-          panStartY = event.globalY
+-          hitArea.cursor = 'grabbing'
++          panStartX = event.clientX
++          panStartY = event.clientY
+           return
+         }
+ 
++        if (event.target !== pixiCanvasEl) return
++
++        // If a port drag is in progress, the Pixi-side pointerdown handler has
++        // already claimed this gesture — don't also start a marquee.
++        if (portDragActive) return
++
+         isMarqueeDragging = true
+-        marqueeStartX = event.globalX
+-        marqueeStartY = event.globalY
++        marqueeStartX = event.clientX
++        marqueeStartY = event.clientY
+         marqueeRect.visible = true
+-        canvas.onPaneClick()
+-      })
++        currentCanvas.onPaneClick()
++      }
+ 
+-      hitArea.on('globalpointermove', (event: FederatedPointerEvent) => {
++      const onCanvasPointerMove = (event: PointerEvent) => {
++        const currentCanvas = canvasRef.current
+         if (isPanning) {
+-          const dx = event.globalX - panStartX
+-          const dy = event.globalY - panStartY
+-          canvas.panBy(dx, dy)
+-          panStartX = event.globalX
+-          panStartY = event.globalY
++          const dx = event.clientX - panStartX
++          const dy = event.clientY - panStartY
++          currentCanvas.panBy(dx, dy)
++          panStartX = event.clientX
++          panStartY = event.clientY
++          return
++        }
++
++        if (dragState.active) {
++          // Native pointermove is more reliable than Pixi's
++          // `stage.root.on('globalpointermove')` here, which only fires when
++          // the hit-test rootTarget is configured to receive global moves.
++          const dx = event.clientX - dragCanvasX
++          const dy = event.clientY - dragCanvasY
++          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
++            currentCanvas.moveSelectedNodes(dx / currentCanvas.viewport.zoom, dy / currentCanvas.viewport.zoom)
++            dragCanvasX = event.clientX
++            dragCanvasY = event.clientY
++          }
+           return
+         }
+ 
+         if (!isMarqueeDragging) return
+ 
+-        const x1 = Math.min(marqueeStartX, event.globalX)
+-        const y1 = Math.min(marqueeStartY, event.globalY)
+-        const x2 = Math.max(marqueeStartX, event.globalX)
+-        const y2 = Math.max(marqueeStartY, event.globalY)
++        const rect = pixiCanvasEl.getBoundingClientRect()
++        // Convert screen coords (clientX/Y relative to canvas-host) into
++        // world coords. The overlay layer is parented to stage.root, which
++        // is panned/scaled by the viewport, so marquee geometry must be in
++        // world space — otherwise the box would render at the wrong position
++        // whenever the user has panned or zoomed.
++        const screenX1 = Math.min(marqueeStartX, event.clientX) - rect.left
++        const screenY1 = Math.min(marqueeStartY, event.clientY) - rect.top
++        const screenX2 = Math.max(marqueeStartX, event.clientX) - rect.left
++        const screenY2 = Math.max(marqueeStartY, event.clientY) - rect.top
++        const wx1 = (screenX1 - currentCanvas.viewport.x) / currentCanvas.viewport.zoom
++        const wy1 = (screenY1 - currentCanvas.viewport.y) / currentCanvas.viewport.zoom
++        const wx2 = (screenX2 - currentCanvas.viewport.x) / currentCanvas.viewport.zoom
++        const wy2 = (screenY2 - currentCanvas.viewport.y) / currentCanvas.viewport.zoom
+ 
+         marqueeRect.clear()
+-        marqueeRect.rect(x1, y1, x2 - x1, y2 - y1)
++        marqueeRect.rect(wx1, wy1, wx2 - wx1, wy2 - wy1)
+         marqueeRect.fill({ color: 0x0071e3, alpha: 0.1 })
+         marqueeRect.stroke({ color: 0x0071e3, alpha: 0.4, width: 1 })
+-      })
++      }
+ 
+-      hitArea.on('pointerup', (event: FederatedPointerEvent) => {
++      const finishMarquee = (event: PointerEvent) => {
++        if (!isMarqueeDragging) return
++        isMarqueeDragging = false
++        marqueeRect.visible = false
++
++        const currentCanvas = canvasRef.current
++        const rect = pixiCanvasEl.getBoundingClientRect()
++        // Convert screen → world coords (the rect lives in the world
++        // layer which is panned/scaled by the viewport).
++        const screenX1 = Math.min(marqueeStartX, event.clientX) - rect.left
++        const screenY1 = Math.min(marqueeStartY, event.clientY) - rect.top
++        const screenX2 = Math.max(marqueeStartX, event.clientX) - rect.left
++        const screenY2 = Math.max(marqueeStartY, event.clientY) - rect.top
++        const wx1 = (screenX1 - currentCanvas.viewport.x) / currentCanvas.viewport.zoom
++        const wy1 = (screenY1 - currentCanvas.viewport.y) / currentCanvas.viewport.zoom
++        const wx2 = (screenX2 - currentCanvas.viewport.x) / currentCanvas.viewport.zoom
++        const wy2 = (screenY2 - currentCanvas.viewport.y) / currentCanvas.viewport.zoom
++
++        if (Math.abs(wx2 - wx1) < 5 && Math.abs(wy2 - wy1) < 5) return
++
++        currentCanvas.selectNodesInRect(wx1, wy1, wx2, wy2)
++      }
++
++      const onCanvasPointerUp = (event: PointerEvent) => {
+         if (isPanning) {
+           isPanning = false
+-          hitArea.cursor = spaceDown ? 'grab' : 'default'
+           return
+         }
+ 
+-        if (!isMarqueeDragging) return
+-        isMarqueeDragging = false
+-        marqueeRect.visible = false
++        if (dragState.active) {
++          dragState.active = false
++          return
++        }
+ 
+-        const x1 = Math.min(marqueeStartX, event.globalX)
+-        const y1 = Math.min(marqueeStartY, event.globalY)
+-        const x2 = Math.max(marqueeStartX, event.globalX)
+-        const y2 = Math.max(marqueeStartY, event.globalY)
++        finishMarquee(event)
++      }
+ 
+-        // Only marquee if dragged more than 5px
+-        if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) return
++      const onWindowPointerUp = (event: PointerEvent) => {
++        isPanning = false
++        finishMarquee(event)
++      }
+ 
+-        // Select nodes within marquee
+-        canvas.selectNodesInRect(x1, y1, x2, y2)
+-      })
++      pixiCanvasEl.addEventListener('pointerdown', onCanvasPointerDown)
++      pixiCanvasEl.addEventListener('pointermove', onCanvasPointerMove)
++      pixiCanvasEl.addEventListener('pointerup', onCanvasPointerUp)
++      window.addEventListener('pointerup', onWindowPointerUp)
++
++      // Per-event zoom factor for mouse wheels in DOM_DELTA_LINE mode.
++      // One wheel event = one notch = 25% zoom, so going from 50% to 200%
++      // takes 3 notches. Trackpads (DOM_DELTA_PIXEL) keep the smooth 1.0015
++      // factor because each gesture emits many small wheel events.
++      const ZOOM_FACTOR_PER_WHEEL_LINE = 1.25
++      const ZOOM_FACTOR_PER_WHEEL_PIXEL = 1.0015
++
++      const onWheel = (event: WheelEvent) => {
++        event.preventDefault()
++        const currentCanvas = canvasRef.current
++        const rect = pixiCanvasEl.getBoundingClientRect()
++        const cursorX = event.clientX - rect.left
++        const cursorY = event.clientY - rect.top
++
++        const direction = event.deltaY < 0 ? 1 : -1
++        const factor = direction >= 0 ? ZOOM_FACTOR_PER_WHEEL_LINE : 1 / ZOOM_FACTOR_PER_WHEEL_LINE
++
++        if (event.deltaMode === 0 /* DOM_DELTA_PIXEL */ || event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
++          // Trackpad/magic mouse: each event is a tiny slice of a gesture, so
++          // use the smooth sub-1% factor instead.
++          const smoothFactor = direction >= 0 ? ZOOM_FACTOR_PER_WHEEL_PIXEL : 1 / ZOOM_FACTOR_PER_WHEEL_PIXEL
++          currentCanvas.zoomAt(smoothFactor, cursorX, cursorY)
++          return
++        }
+ 
+-      hitArea.on('pointerupoutside', () => {
+-        isPanning = false
+-        isMarqueeDragging = false
+-        marqueeRect.visible = false
+-      })
++        currentCanvas.zoomAt(factor, cursorX, cursorY)
++      }
+ 
+-      const redraw = () => {
+-        const width = host.clientWidth
+-        const height = host.clientHeight
++      pixiCanvasEl.addEventListener('wheel', onWheel, { passive: false })
+ 
+-        // Apply viewport transform
+-        stage.root.x = canvas.viewport.x
+-        stage.root.y = canvas.viewport.y
+-        stage.root.scale.set(canvas.viewport.zoom)
+-
+-        // Update hit area size
+-        hitArea.clear()
+-        hitArea.rect(0, 0, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
+-        hitArea.fill({ color: 0x000000, alpha: 0.001 })
+-
+-        drawGrid(layers.gridLayer, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
+-        drawEdges(layers.edgeLayer, graphEdges, nodesById, null)
+-        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds)
+-
+-        // Attach events to nodes and ports
+-        for (const child of layers.nodeLayer.children) {
+-          const label = (child as { label?: string }).label
+-          if (!label) continue
+-
+-          // Remove existing listeners to avoid duplicates
+-          child.removeAllListeners()
+-
+-          // Check if this is a port
+-          if (label.startsWith('port:')) {
+-            let portDragging = false
+-            let portStartX = 0
+-            let portStartY = 0
+-            let sourceNodeId = ''
+-
+-            // Find parent node
+-            const parent = child.parent
+-            if (parent && 'label' in parent) {
+-              sourceNodeId = (parent as { label: string }).label
+-            }
++      let portDragActive = false
++      let portDragSourceNodeId = ''
++      let portDragSourcePortId = 'out'
++      let portDragStartWorldX = 0
++      let portDragStartWorldY = 0
++
++      const removeTempLine = () => {
++        drawEdges(previewEdgeLayer, [], { preview: true })
++      }
++
++      const drawTempLine = (x1: number, y1: number, x2: number, y2: number) => {
++        const sourceNode = nodesByIdRef.current.get(portDragSourceNodeId)
++        const sourceAnchor = sourceNode ? getPortAnchor(sourceNode, portDragSourcePortId) : { x: x1, y: y1, side: 'right' as const }
++        const targetSide = x2 >= x1 ? 'left' : 'right'
++        const points = routeOrthogonalEdge({
++          source: { x: sourceAnchor.x, y: sourceAnchor.y },
++          sourceSide: sourceAnchor.side,
++          target: { x: x2, y: y2 },
++          targetSide,
++        })
++
++        drawEdges(previewEdgeLayer, [{ id: 'preview', points }], { preview: true })
++      }
++
++      const onPortDragPointerMove = (event: PointerEvent) => {
++        if (!portDragActive) return
++
++        const currentCanvas = canvasRef.current
++        const rect = pixiCanvasEl.getBoundingClientRect()
++        const canvasX = event.clientX - rect.left
++        const canvasY = event.clientY - rect.top
++        const worldX = (canvasX - currentCanvas.viewport.x) / currentCanvas.viewport.zoom
++        const worldY = (canvasY - currentCanvas.viewport.y) / currentCanvas.viewport.zoom
++
++        drawTempLine(portDragStartWorldX, portDragStartWorldY, worldX, worldY)
++      }
+ 
+-            child.on('pointerdown', (event: FederatedPointerEvent) => {
+-              portDragging = true
+-              portStartX = event.globalX
+-              portStartY = event.globalY
+-
+-              // Start connection in connector mode
+-              if (canvas.connectorMode) {
+-                canvas.startConnection(sourceNodeId, label.replace('port:', ''))
+-              }
+-            })
+-
+-            child.on('globalpointermove', (event: FederatedPointerEvent) => {
+-              if (!portDragging) return
+-
+-              // Draw temporary connection line
+-              layers.overlayLayer.children.forEach((c) => {
+-                if ((c as { label?: string }).label === 'temp-connection') {
+-                  layers.overlayLayer.removeChild(c)
+-                }
+-              })
+-
+-              const tempLine = new Graphics()
+-              tempLine.label = 'temp-connection'
+-              tempLine.stroke({ color: 0x0071e3, width: 2, alpha: 0.6 })
+-              tempLine.moveTo(portStartX, portStartY)
+-              tempLine.lineTo(event.globalX, event.globalY)
+-              layers.overlayLayer.addChild(tempLine)
+-            })
+-
+-            child.on('pointerup', (event: FederatedPointerEvent) => {
+-              if (!portDragging) return
+-              portDragging = false
+-
+-              // Remove temporary line
+-              layers.overlayLayer.children.forEach((c) => {
+-                if ((c as { label?: string }).label === 'temp-connection') {
+-                  layers.overlayLayer.removeChild(c)
+-                }
+-              })
+-
+-              // Find target node under cursor
+-              const targetNode = findNodeAtPosition(
+-                event.globalX,
+-                event.globalY,
+-                graphNodes,
+-                sourceNodeId,
+-                canvas.viewport,
+-              )
+-
+-              if (targetNode) {
+-                canvas.onConnect(sourceNodeId, targetNode.id)
+-              }
+-
+-              // End connection if in connector mode
+-              if (canvas.connectorMode && canvas.connectionStart) {
+-                canvas.endConnection(targetNode?.id ?? sourceNodeId)
+-              }
+-            })
+-
+-            child.on('pointerupoutside', () => {
+-              portDragging = false
+-              layers.overlayLayer.children.forEach((c) => {
+-                if ((c as { label?: string }).label === 'temp-connection') {
+-                  layers.overlayLayer.removeChild(c)
+-                }
+-              })
+-            })
+-
+-            continue
++      const onPortDragPointerUp = (event: PointerEvent) => {
++        if (!portDragActive) return
++
++        portDragActive = false
++        removeTempLine()
++
++        const currentCanvas = canvasRef.current
++        const currentNodes = graphNodesRef.current
++        const rect = pixiCanvasEl.getBoundingClientRect()
++        const canvasX = event.clientX - rect.left
++        const canvasY = event.clientY - rect.top
++
++        const targetNode = findNodeAtPosition(
++          canvasX,
++          canvasY,
++          currentNodes,
++          portDragSourceNodeId,
++          currentCanvas.viewport,
++        )
++
++        if (targetNode) {
++          const targetPortId = getDefaultTargetPortId(targetNode)
++
++          if (currentCanvas.connectorMode && currentCanvas.connectionStart) {
++            currentCanvas.endConnection(targetNode.id, targetPortId)
++          } else {
++            currentCanvas.onConnect(
++              portDragSourceNodeId,
++              targetNode.id,
++              portDragSourcePortId,
++              targetPortId,
++            )
+           }
++        } else if (currentCanvas.connectorMode && currentCanvas.connectionStart) {
++          currentCanvas.endConnection(portDragSourceNodeId)
++        }
++      }
++
++      const onWindowPointerUpForPortDrag = () => {
++        if (!portDragActive) return
++        portDragActive = false
++        removeTempLine()
++      }
++
++      pixiCanvasEl.addEventListener('pointermove', onPortDragPointerMove)
++      pixiCanvasEl.addEventListener('pointerup', onPortDragPointerUp)
++      window.addEventListener('pointerup', onWindowPointerUpForPortDrag)
+ 
+-          // Node event handling
+-          child.on('pointertap', (event: FederatedPointerEvent) => {
++      let lastSceneKey = ''
++      const ticker = () => {
++        const currentCanvas = canvasRef.current
++        const currentGraphNodes = graphNodesRef.current
++        const currentGraphEdges = graphEdgesRef.current
++
++        const width = host.clientWidth
++        const height = host.clientHeight
++
++        stage.root.x = currentCanvas.viewport.x
++        stage.root.y = currentCanvas.viewport.y
++        stage.root.scale.set(currentCanvas.viewport.zoom)
++
++        const sceneKey = buildSceneKey(width, height, currentCanvas.viewport, currentGraphNodes, currentGraphEdges, currentCanvas.selectedNodeIds)
++        if (sceneKey === lastSceneKey) return
++        lastSceneKey = sceneKey
++
++        drawGrid(layers.gridLayer, width / currentCanvas.viewport.zoom, height / currentCanvas.viewport.zoom)
++        drawEdges(layers.edgeLayer, buildRoutedEdges(currentGraphEdges, nodesByIdRef.current))
++        drawNodes(layers.nodeLayer, currentGraphNodes, currentCanvas.selectedNodeIds)
++
++        for (const container of layers.nodeLayer.children) {
++          const nodeLabel = (container as { label?: string }).label
++          if (!nodeLabel || nodeLabel.startsWith('port:')) continue
++
++          bindPortListeners(
++            layers.nodeLayer,
++            nodeLabel,
++            pixiCanvasEl,
++            () => canvasRef.current,
++            ({ nodeId, portId, worldX, worldY }) => {
++              portDragActive = true
++              portDragSourceNodeId = nodeId
++              portDragSourcePortId = portId
++              portDragStartWorldX = worldX
++              portDragStartWorldY = worldY
++
++              // The Pixi port hit-test and the native pointerdown on the canvas
++              // both fire on the same gesture, so the native marquee path
++              // (onCanvasPointerDown) arms isMarqueeDragging at the same time.
++              // Cancel it here — port drag is the authoritative intent.
++              isMarqueeDragging = false
++              marqueeRect.visible = false
++            },
++          )
++
++          container.on('pointertap', () => {
+             const now = Date.now()
+             const timeSinceLastClick = now - lastClickTime
+-            const isSameNode = lastClickNodeId === label
++            const isSameNode = lastClickNodeId === nodeLabel
+ 
+             if (timeSinceLastClick < 300 && isSameNode) {
+-              // Double click - open editor
+-              canvas.openEditor(label)
+-            } else {
+-              // Single click - select
+-              const additive = event.shiftKey || event.ctrlKey || event.metaKey
+-              canvas.onNodeClick(label, additive)
++              currentCanvas.openEditor(nodeLabel)
+             }
+ 
+             lastClickTime = now
+-            lastClickNodeId = label
++            lastClickNodeId = nodeLabel
+           })
+ 
+-          // Drag support for node
+-          let dragging = false
+-          let startX = 0
+-          let startY = 0
+-
+-          child.on('pointerdown', (event: FederatedPointerEvent) => {
+-            dragging = true
+-            startX = event.globalX
+-            startY = event.globalY
++          container.on('pointerdown', (event: FederatedPointerEvent) => {
++            const eventTarget = event.target as { label?: string } | null
++            if (eventTarget?.label?.startsWith('port:')) return
++
++            // Select the node on pointerdown — don't wait for pointertap.
++            // pointertap only fires when the pointer doesn't move much, so a
++            // genuine drag never selects the dragged node, and moveSelectedNodes
++            // (which only mutates selectedNodeIds) is a no-op for unselected
++            // nodes. The shift/ctrl/meta keys keep additive selection working.
++            const additive = event.shiftKey || event.ctrlKey || event.metaKey
++            currentCanvas.onNodeClick(nodeLabel, additive)
++
++            dragState.active = true
++            dragState.lastX = event.globalX
++            dragState.lastY = event.globalY
++            // Native event coords feed the canvas-level pointermove handler
++            // that actually performs the move.
++            dragCanvasX = event.clientX
++            dragCanvasY = event.clientY
++
++            // Don't let this pointerdown bubble to stage.root — otherwise the
++            // marquee handler would clear the selection on every node click.
++            event.stopPropagation()
+           })
+ 
+-          child.on('globalpointermove', (event: FederatedPointerEvent) => {
+-            if (!dragging) return
+-
+-            const dx = event.globalX - startX
+-            const dy = event.globalY - startY
+-
+-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+-              canvas.moveSelectedNodes(dx, dy)
+-              startX = event.globalX
+-              startY = event.globalY
+-            }
++          container.on('pointerup', () => {
++            dragState.active = false
+           })
+ 
+-          child.on('pointerup', () => {
+-            dragging = false
+-          })
+-
+-          child.on('pointerupoutside', () => {
+-            dragging = false
++          container.on('pointerupoutside', () => {
++            dragState.active = false
+           })
+         }
+-      }
+ 
+-      redraw()
++      }
+ 
+-      const ticker = () => redraw()
+       stage.app.ticker.add(ticker)
+ 
+-      destroy = () => {
++      const clearDragState = () => {
++        dragState.active = false
++      }
++      stage.root.on('pointerup', clearDragState)
++      stage.root.on('pointerupoutside', clearDragState)
++
++      // Marquee: only fires when the user clicks the empty canvas — node containers
++      // call event.stopPropagation() on their own pointerdown, so reaching stage.root
++      // here means "no node was hit". We make root a static, full-stage hit area
++      // using a Rectangle covering the world so the marquee works regardless of zoom.
++      const rootAsStatic = stage.root as unknown as { eventMode?: string }
++      rootAsStatic.eventMode = 'static'
++      stage.root.hitArea = new Rectangle(-1e4, -1e4, 2e4, 2e4)
++
++      stage.root.on('pointerdown', (event: FederatedPointerEvent) => {
++        const currentCanvas = canvasRef.current
++        currentCanvas.onPaneClick()
++        isMarqueeDragging = true
++        marqueeStartX = event.globalX
++        marqueeStartY = event.globalY
++        marqueeRect.visible = true
++        marqueeRect.clear()
++        marqueeRect.rect(marqueeStartX, marqueeStartY, 0, 0)
++        marqueeRect.fill({ color: 0x0071e3, alpha: 0.0 })
++      })
++
++      stage.root.on('globalpointermove', (event: FederatedPointerEvent) => {
++        if (!isMarqueeDragging) return
++        const x1 = Math.min(marqueeStartX, event.globalX)
++        const y1 = Math.min(marqueeStartY, event.globalY)
++        const x2 = Math.max(marqueeStartX, event.globalX)
++        const y2 = Math.max(marqueeStartY, event.globalY)
++
++        marqueeRect.clear()
++        marqueeRect.rect(x1, y1, x2 - x1, y2 - y1)
++        marqueeRect.fill({ color: 0x0071e3, alpha: 0.1 })
++        marqueeRect.stroke({ color: 0x0071e3, alpha: 0.4, width: 1 })
++      })
++
++      destroyFn = () => {
+         stage.app.ticker.remove(ticker)
++        window.removeEventListener('keydown', onKeyDown)
++        window.removeEventListener('keyup', onKeyUp)
++
++        pixiCanvasEl.removeEventListener('pointerdown', onCanvasPointerDown)
++        pixiCanvasEl.removeEventListener('pointermove', onCanvasPointerMove)
++        pixiCanvasEl.removeEventListener('pointerup', onCanvasPointerUp)
++        window.removeEventListener('pointerup', onWindowPointerUp)
++        pixiCanvasEl.removeEventListener('wheel', onWheel)
++
++        pixiCanvasEl.removeEventListener('pointermove', onPortDragPointerMove)
++        pixiCanvasEl.removeEventListener('pointerup', onPortDragPointerUp)
++        window.removeEventListener('pointerup', onWindowPointerUpForPortDrag)
++        stage.root.off('pointerup', clearDragState)
++        stage.root.off('pointerupoutside', clearDragState)
++
++        delete (window as unknown as { __flowentGetNodePosition?: unknown }).__flowentGetNodePosition
++        delete (window as unknown as { __flowentGetNodePositions?: unknown }).__flowentGetNodePositions
++        delete (window as unknown as { __flowentGetEdgeRoutes?: unknown }).__flowentGetEdgeRoutes
++
+         stage.destroy()
+       }
+     }
+@@ -405,14 +614,9 @@ export function ProcessCanvas() {
+ 
+     return () => {
+       disposed = true
+-      destroy?.()
++      destroyFn?.()
+     }
+-  }, [
+-    canvas,
+-    graphEdges,
+-    graphNodes,
+-    nodesById,
+-  ])
++  }, [])
+ 
+   return (
+     <div className="canvas-container">
+@@ -425,6 +629,7 @@ export function ProcessCanvas() {
+         onAddActivity={canvas.addActivity}
+         onAddDecision={canvas.addDecision}
+         onAddEnd={canvas.addEnd}
++        onToggleConnector={canvas.toggleConnectorMode}
+         onRemove={canvas.removeSelected}
+         onAutoLayout={() => canvas.autoLayout()}
+         onUndo={canvas.undo}
+@@ -432,9 +637,28 @@ export function ProcessCanvas() {
+         canUndo={canvas.canUndo}
+         canRedo={canvas.canRedo}
+         hasSelection={canvas.selectedNodeIds.size > 0}
++        connectorMode={canvas.connectorMode}
+       />
+ 
+-      <div ref={hostRef} className="pixi-host" aria-label="Process canvas" tabIndex={0} />
++      <div
++        ref={hostRef}
++        className="pixi-host"
++        role="region"
++        aria-label="Process canvas"
++        aria-describedby="canvas-instructions canvas-structure"
++        tabIndex={0}
++      />
++      <p id="canvas-instructions" className="sr-only">
++        Process map canvas. Use the toolbar to add activities, decisions, endings, connectors, and layout the map.
++      </p>
++      <div id="canvas-structure" className="sr-only" aria-live="polite">
++        <p>{canvas.nodes.length} nodes and {canvas.edges.length} connections.</p>
++        <ul>
++          {canvas.nodes.map((node) => (
++            <li key={node.id}>{getAccessibleNodeDescription(node)}</li>
++          ))}
++        </ul>
++      </div>
+ 
+       <div className="keyboard-hint" aria-hidden="true">
+         <span><kbd>A</kbd> Activity</span>
+@@ -470,14 +694,93 @@ export function ProcessCanvas() {
+   )
+ }
+ 
++function isEditableShortcutTarget(target: EventTarget | null): boolean {
++  if (!(target instanceof HTMLElement)) return false
++  if (target.isContentEditable) return true
++
++  const tagName = target.tagName.toLowerCase()
++  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true
++  return Boolean(target.closest('[contenteditable="true"], [role="textbox"], [role="combobox"], [role="dialog"]'))
++}
++
++function shouldExposeCanvasTestHooks(): boolean {
++  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
++}
++
++function getAccessibleNodeDescription(node: ProcessNode): string {
++  if (node.data.kind === 'activity') {
++    const roles = node.data.roleIds.length > 0 ? ` Roles: ${node.data.roleIds.join(', ')}.` : ''
++    const summary = node.data.summary ? ` ${node.data.summary}` : ''
++    return `Activity: ${node.data.title}.${summary}${roles}`
++  }
++
++  if (node.data.kind === 'decision') {
++    const criteria = node.data.criteria ? ` Criteria: ${node.data.criteria}.` : ''
++    return `Decision: ${node.data.title}.${criteria}`
++  }
++
++  if (node.data.kind === 'stage') {
++    const owner = node.data.owner ? ` Owner: ${node.data.owner}.` : ''
++    return `Stage: ${node.data.title}.${owner}`
++  }
++
++  if (node.data.kind === 'bottleneck') {
++    const impact = node.data.impact ? ` Impact: ${node.data.impact}.` : ''
++    return `Bottleneck: ${node.data.title}.${impact}`
++  }
++
++  return `${node.data.kind === 'start' ? 'Start' : 'End'} marker: ${node.data.label}.`
++}
++
++type GraphNodeView = ReturnType<typeof toGraphNode>
++
++type PortDragStart = {
++  nodeId: string
++  portId: string
++  worldX: number
++  worldY: number
++}
++
++function bindPortListeners(
++  nodeContainer: { children: Array<PixiGraphics | { label?: string }> },
++  nodeId: string,
++  canvasEl: HTMLCanvasElement,
++  getCanvasState: () => ReturnType<typeof useCanvasState>,
++  onPortDragStart: (start: PortDragStart) => void,
++): void {
++  for (const child of nodeContainer.children) {
++    const candidate = child as PixiGraphics & { label?: string; removeAllListeners?: () => void; on?: (...args: unknown[]) => void }
++    const portLabel = candidate.label
++    if (!portLabel?.startsWith(`port:${nodeId}:`)) continue
++
++    const portId = portLabel.split(':')[2] ?? ''
++
++    candidate.on?.('pointerdown', (event: FederatedPointerEvent) => {
++      const canvasState = getCanvasState()
++      const rect = canvasEl.getBoundingClientRect()
++      const canvasX = event.globalX - rect.left
++      const canvasY = event.globalY - rect.top
++      const worldX = (canvasX - canvasState.viewport.x) / canvasState.viewport.zoom
++      const worldY = (canvasY - canvasState.viewport.y) / canvasState.viewport.zoom
++
++      onPortDragStart({ nodeId, portId, worldX, worldY })
++
++      if (canvasState.connectorMode) {
++        canvasState.startConnection(nodeId, portId)
++      }
++
++      event.stopPropagation()
++    })
++  }
++}
++
+ function findNodeAtPosition(
+   screenX: number,
+   screenY: number,
+-  nodes: ReturnType<typeof toGraphNode>[],
++  nodes: GraphNodeView[],
+   excludeNodeId: string,
+   viewport: { x: number; y: number; zoom: number },
+-): ReturnType<typeof toGraphNode> | null {
+-  // Convert screen coordinates to world coordinates
++): GraphNodeView | null {
+   const worldX = (screenX - viewport.x) / viewport.zoom
+   const worldY = (screenY - viewport.y) / viewport.zoom
+ 
+@@ -492,10 +795,73 @@ function findNodeAtPosition(
+       return node
+     }
+   }
++
+   return null
+ }
+ 
+-function toGraphNode(node: ProcessNode) {
++function getDefaultTargetPortId(node: GraphNodeView): string {
++  const inPort = node.ports.find((port) => port.id === 'in')
++  if (inPort) return inPort.id
++
++  if (node.ports.length > 0) {
++    return node.ports[0].id
++  }
++
++  return 'in'
++}
++
++interface GraphEdgeView {
++  id: string
++  sourceNodeId: string
++  sourcePortId: string
++  targetNodeId: string
++  targetPortId: string
++  label: string
++}
++
++function buildSceneKey(
++  width: number,
++  height: number,
++  viewport: { x: number; y: number; zoom: number },
++  nodes: GraphNodeView[],
++  edges: GraphEdgeView[],
++  selectedNodeIds: Set<string>,
++): string {
++  const nodeKey = nodes
++    .map((node) => `${node.id}:${node.x}:${node.y}:${node.title}:${node.summary ?? ''}:${node.roleTags.join(',')}`)
++    .join('|')
++  const edgeKey = edges
++    .map((edge) => `${edge.id}:${edge.sourceNodeId}:${edge.sourcePortId}:${edge.targetNodeId}:${edge.targetPortId}:${edge.label}`)
++    .join('|')
++  return `${width}:${height}:${viewport.x}:${viewport.y}:${viewport.zoom}:${Array.from(selectedNodeIds).join(',')}::${nodeKey}::${edgeKey}`
++}
++
++function buildRoutedEdges(edges: GraphEdgeView[], nodesById: Map<string, GraphNodeView>): RoutedEdgeView[] {
++  const routed: RoutedEdgeView[] = []
++
++  for (const edge of edges) {
++    const sourceNode = nodesById.get(edge.sourceNodeId)
++    const targetNode = nodesById.get(edge.targetNodeId)
++    if (!sourceNode || !targetNode) continue
++
++    const source = getPortAnchor(sourceNode, edge.sourcePortId, 'source')
++    const target = getPortAnchor(targetNode, edge.targetPortId, 'target')
++    routed.push({
++      id: edge.id,
++      label: edge.label,
++      points: routeOrthogonalEdge({
++        source: { x: source.x, y: source.y },
++        sourceSide: source.side,
++        target: { x: target.x, y: target.y },
++        targetSide: target.side,
++      }),
++    })
++  }
++
++  return routed
++}
++
++function toGraphNode(node: ProcessNode): GraphNode {
+   if (node.data.kind === 'activity') {
+     return {
+       id: node.id,
+@@ -503,13 +869,13 @@ function toGraphNode(node: ProcessNode) {
+       x: node.position.x,
+       y: node.position.y,
+       width: 220,
+-      height: 96,
++      height: 112,
+       title: node.data.title,
+       summary: node.data.summary,
+       roleTags: node.data.roleIds,
+       ports: [
+-        { id: 'in', side: 'top' as const },
+-        { id: 'out', side: 'bottom' as const },
++        { id: 'in', side: 'left' as const },
++        { id: 'out', side: 'right' as const },
+       ],
+     }
+   }
+@@ -520,15 +886,58 @@ function toGraphNode(node: ProcessNode) {
+       type: 'decision' as const,
+       x: node.position.x,
+       y: node.position.y,
+-      width: 180,
+-      height: 108,
++      width: 190,
++      height: 124,
+       title: node.data.title,
+       criteria: node.data.criteria,
++      decisionOutcomes: node.data.decisionOutcomes,
++      owner: node.data.owner,
++      roleTags: [],
++      ports: [
++        { id: 'in', side: 'left' as const },
++        { id: 'out', side: 'right' as const },
++      ],
++    }
++  }
++
++  if (node.data.kind === 'stage') {
++    return {
++      id: node.id,
++      type: 'stage' as const,
++      x: node.position.x,
++      y: node.position.y,
++      width: 280,
++      height: 132,
++      title: node.data.title,
++      goal: node.data.goal,
++      entryCondition: node.data.entryCondition,
++      exitCondition: node.data.exitCondition,
++      owner: node.data.owner,
++      roleTags: [],
++      ports: [
++        { id: 'in', side: 'left' as const },
++        { id: 'out', side: 'right' as const },
++      ],
++    }
++  }
++
++  if (node.data.kind === 'bottleneck') {
++    return {
++      id: node.id,
++      type: 'bottleneck' as const,
++      x: node.position.x,
++      y: node.position.y,
++      width: 220,
++      height: 104,
++      title: node.data.title,
++      symptom: node.data.symptom,
++      impact: node.data.impact,
++      suspectedCause: node.data.suspectedCause,
++      reviewStatus: node.data.reviewStatus,
+       roleTags: [],
+       ports: [
+-        { id: 'in', side: 'top' as const },
+-        { id: 'yes', side: 'bottom' as const },
+-        { id: 'no', side: 'right' as const },
++        { id: 'in', side: 'left' as const },
++        { id: 'out', side: 'right' as const },
+       ],
+     }
+   }
+@@ -544,6 +953,6 @@ function toGraphNode(node: ProcessNode) {
+     height: 56,
+     title: node.data.label,
+     roleTags: [],
+-    ports: [{ id: isStart ? 'out' : 'in', side: isStart ? ('bottom' as const) : ('top' as const) }],
++    ports: [{ id: isStart ? 'out' : 'in', side: isStart ? ('right' as const) : ('left' as const) }],
+   }
+ }
+diff --git a/src/features/canvas/Toolbar.tsx b/src/features/canvas/Toolbar.tsx
+index 2aba934..0e0962e 100644
+--- a/src/features/canvas/Toolbar.tsx
++++ b/src/features/canvas/Toolbar.tsx
+@@ -4,6 +4,7 @@ interface ToolbarProps {
+   onAddActivity: ReturnType<typeof useCanvasState>['addActivity']
+   onAddDecision: ReturnType<typeof useCanvasState>['addDecision']
+   onAddEnd: ReturnType<typeof useCanvasState>['addEnd']
++  onToggleConnector: ReturnType<typeof useCanvasState>['toggleConnectorMode']
+   onRemove: ReturnType<typeof useCanvasState>['removeSelected']
+   onAutoLayout: () => void
+   onUndo: () => void
+@@ -11,12 +12,14 @@ interface ToolbarProps {
+   canUndo: boolean
+   canRedo: boolean
+   hasSelection: boolean
++  connectorMode: boolean
+ }
+ 
+ export function Toolbar({
+   onAddActivity,
+   onAddDecision,
+   onAddEnd,
++  onToggleConnector,
+   onRemove,
+   onAutoLayout,
+   onUndo,
+@@ -24,6 +27,7 @@ export function Toolbar({
+   canUndo,
+   canRedo,
+   hasSelection,
++  connectorMode,
+ }: ToolbarProps) {
+   return (
+     <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
+@@ -66,6 +70,20 @@ export function Toolbar({
+         <span>End</span>
+       </button>
+       <div className="toolbar-divider" />
++      <button
++        type="button"
++        className={`toolbar-button ${connectorMode ? 'active' : ''}`}
++        onClick={onToggleConnector}
++        title="Connector mode (C)"
++        aria-pressed={connectorMode}
++      >
++        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
++          <path d="M4 5h3a4 4 0 014 4v0a4 4 0 004 4h1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
++          <circle cx="4" cy="5" r="2" stroke="currentColor" strokeWidth="1.5" />
++          <path d="M14 10l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
++        </svg>
++        <span>Connect</span>
++      </button>
+       <button
+         type="button"
+         className="toolbar-button"
+@@ -85,6 +103,7 @@ export function Toolbar({
+         onClick={onUndo}
+         disabled={!canUndo}
+         title="Undo"
++        aria-label="Undo"
+       >
+         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+           <path d="M4 7h7a4 4 0 110 8H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+@@ -97,6 +116,7 @@ export function Toolbar({
+         onClick={onRedo}
+         disabled={!canRedo}
+         title="Redo"
++        aria-label="Redo"
+       >
+         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+           <path d="M14 7H7a4 4 0 100 8h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

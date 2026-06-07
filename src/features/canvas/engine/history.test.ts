@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createHistoryState, pushHistory, undo, redo } from './history'
+import { createHistoryState, pushHistory, setPresent, undo, redo } from './history'
 
 describe('history', () => {
   it('creates history state with initial present value', () => {
@@ -52,5 +52,27 @@ describe('history', () => {
     const h3 = pushHistory(u1, { marker: 'state-1b' })
     expect(h3.future).toEqual([])
     expect(h3.present).toEqual({ marker: 'state-1b' })
+  })
+
+  describe('setPresent', () => {
+    it('replaces the present without pushing onto the past or future stacks', () => {
+      const h0 = createHistoryState({ marker: 'state-0' })
+      const h1 = pushHistory(h0, { marker: 'state-1' })
+
+      const transient = setPresent(h1, { marker: 'view-only' })
+
+      expect(transient.present).toEqual({ marker: 'view-only' })
+      expect(transient.past).toEqual(h1.past)
+      expect(transient.future).toEqual(h1.future)
+    })
+
+    it('leaves a real undo untouched after a transient viewport update', () => {
+      const h0 = createHistoryState({ marker: 'state-0' })
+      const h1 = pushHistory(h0, { marker: 'state-1' })
+      const transient = setPresent(h1, { marker: 'view-only' })
+
+      const back = undo(transient)
+      expect(back.present).toEqual({ marker: 'state-0' })
+    })
   })
 })

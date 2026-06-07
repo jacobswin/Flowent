@@ -1,0 +1,19 @@
+{
+  "folders": [],
+  "maps": [
+    {
+      "id": "map-mq33644d-zwr3yd",
+      "name": "Welcome",
+      "folderId": null,
+      "order": 0,
+      "updatedAt": 1780794673501
+    },
+    {
+      "id": "map-mq33644e-yrfra6",
+      "name": "Welcome",
+      "folderId": null,
+      "order": 1,
+      "updatedAt": 1780794673502
+    }
+  ]
+}

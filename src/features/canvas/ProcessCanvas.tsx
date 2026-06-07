@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
-import type { DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
 import type { FederatedPointerEvent } from 'pixi.js'
 import { Graphics } from 'pixi.js'
 import type { ProcessNode } from './canvasTypes'
 import { Toolbar } from './Toolbar'
 import { PropertiesPanel } from './PropertiesPanel'
 import { useCanvasState } from './useCanvasState'
+import { useEdgeLabelEditor } from './useEdgeLabelEditor'
 import { createPixiStage } from './render/pixiStage'
 import { createCanvasLayers, drawGrid } from './render/layers'
 import { drawNodes } from './render/drawNodes'
@@ -26,6 +27,18 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
   }
   const canvas = useCanvasState()
   const hostRef = useRef<HTMLDivElement | null>(null)
+
+  // On-canvas inline label editor. The editor opens when the user
+  // double-taps a label and closes on commit/cancel. The input is keyed
+  // by `openEdgeId` so it remounts each time, picking up the current
+  // label as its initial value without an effect-driven setState.
+  const labelEditor = useEdgeLabelEditor(
+    useCallback((edgeId: string, value: string) => {
+      canvas.updateEdgeData(edgeId, { label: value })
+    }, [canvas]),
+  )
+  const [labelDraft, setLabelDraft] = useState('')
+
 
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (hasDraggedProcessElement(event.dataTransfer)) {
@@ -281,6 +294,9 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           onEdgeClick: (edgeId, event) => {
             canvas.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
           },
+          onOpenLabelEditor: (edgeId, anchor) => {
+            labelEditor.openAt(edgeId, anchor)
+          },
         })
         drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds, {
           dimmedNodeIds: canvas.focusView.dimmedNodeIds,
@@ -497,6 +513,38 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       />
+
+      {labelEditor.openEdgeId && labelEditor.anchor && (() => {
+        // Convert the label's world anchor to viewport-relative screen
+        // coords inside the .pixi-host. The host CSS uses position:absolute
+        // with width:100%/height:100%, so a percentage-positioned input
+        // stays glued to the label even as the user pans/zooms.
+        const screenX = labelEditor.anchor.x * canvas.viewport.zoom + canvas.viewport.x
+        const screenY = labelEditor.anchor.y * canvas.viewport.zoom + canvas.viewport.y
+        return (
+          <input
+            key={labelEditor.openEdgeId}
+            className="edge-label-editor"
+            type="text"
+            value={labelDraft}
+            autoFocus
+            style={{
+              left: `${screenX}px`,
+              top: `${screenY}px`,
+            }}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => setLabelDraft(event.target.value)}
+            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+              if (event.key === 'Enter') {
+                labelEditor.commit(labelDraft)
+              } else if (event.key === 'Escape') {
+                labelEditor.cancel()
+              }
+            }}
+            onBlur={() => labelEditor.commit(labelDraft)}
+            aria-label="Edit connection label"
+          />
+        )
+      })()}
 
       <FocusBar focus={canvas.focus} roles={canvas.roles} onChange={canvas.setFocus} />
 

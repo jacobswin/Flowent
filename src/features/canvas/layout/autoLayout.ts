@@ -24,67 +24,80 @@ export async function layoutGraph(graph: LayoutInput): Promise<LayoutOutput> {
     inDegree.set(edge.targetNodeId, (inDegree.get(edge.targetNodeId) ?? 0) + 1)
   }
 
-  // Topological sort with BFS (Kahn's algorithm)
-  const queue: string[] = []
-  for (const [nodeId, degree] of inDegree.entries()) {
-    if (degree === 0) {
-      queue.push(nodeId)
-    }
-  }
+  // Topological sort with BFS (Kahn's algorithm).
+  // Each "level" becomes a column (X grows with depth);
+  // nodes within a level stack along Y so siblings read as parallel branches.
+  //
+  // Disconnected subgraph handling: if the queue has multiple roots at once,
+  // we lay them out side-by-side rather than stacking them in the first column.
+  // Stacking all roots in column 0 makes the canvas look vertical — wrong for
+  // a left-to-right product. We kick off one BFS per disconnected component,
+  // then concatenate the columns so each component occupies its own X range.
+  const columns: string[][] = []
+  const columnMap = new Map<string, number>()
 
-  const levels: string[][] = []
-  const levelMap = new Map<string, number>()
+  const startBfs = (root: string): void => {
+    const queue: string[] = [root]
 
-  while (queue.length > 0) {
-    const levelSize = queue.length
-    const currentLevel: string[] = []
+    while (queue.length > 0) {
+      const columnSize = queue.length
+      const currentColumn: string[] = []
 
-    for (let i = 0; i < levelSize; i++) {
-      const nodeId = queue.shift()!
-      currentLevel.push(nodeId)
-      levelMap.set(nodeId, levels.length)
+      for (let i = 0; i < columnSize; i++) {
+        const nodeId = queue.shift()!
+        currentColumn.push(nodeId)
+        columnMap.set(nodeId, columns.length)
 
-      for (const neighbor of adjacency.get(nodeId) ?? []) {
-        const newDegree = (inDegree.get(neighbor) ?? 1) - 1
-        inDegree.set(neighbor, newDegree)
-        if (newDegree === 0) {
-          queue.push(neighbor)
+        for (const neighbor of adjacency.get(nodeId) ?? []) {
+          const newDegree = (inDegree.get(neighbor) ?? 1) - 1
+          inDegree.set(neighbor, newDegree)
+          if (newDegree === 0) {
+            queue.push(neighbor)
+          }
         }
       }
-    }
 
-    levels.push(currentLevel)
+      columns.push(currentColumn)
+    }
   }
 
-  // Handle nodes with cycles (not reachable from roots)
-  const remaining = graph.nodes.filter((n) => !levelMap.has(n.id))
+  // First pass: lay out each connected component whose root is a true root
+  // (in-degree 0). Each such component owns its own block of columns.
+  for (const [nodeId, degree] of inDegree.entries()) {
+    if (degree === 0 && !columnMap.has(nodeId)) {
+      startBfs(nodeId)
+    }
+  }
+
+  // Anything left (cycles / orphans) gets its own column block.
+  const remaining = graph.nodes.filter((n) => !columnMap.has(n.id))
   if (remaining.length > 0) {
-    const extraLevel = remaining.map((n) => n.id)
-    for (const nodeId of extraLevel) {
-      levelMap.set(nodeId, levels.length)
+    for (const node of remaining) {
+      columnMap.set(node.id, columns.length)
     }
-    levels.push(extraLevel)
+    columns.push(remaining.map((n) => n.id))
   }
 
-  // Assign coordinates
-  const spacingX = 280
-  const spacingY = 160
-  const startX = 200
-  const startY = 100
+  // Assign coordinates: X grows with column, Y grows with row.
+  // Tuned for activity/decision boxes (width ~220, height ~96).
+  const spacingX = 360
+  const spacingY = 170
+  const startX = 220
+  const startY = 130
 
   const result: LayoutOutput = { nodes: [] }
 
-  for (let levelIdx = 0; levelIdx < levels.length; levelIdx++) {
-    const level = levels[levelIdx]
-    const levelWidth = level.length * spacingX
-    const offsetX = startX + (1200 - levelWidth) / 2
+  for (let columnIdx = 0; columnIdx < columns.length; columnIdx++) {
+    const column = columns[columnIdx]
+    const columnHeight = column.length * spacingY
+    const offsetY = startY + (800 - columnHeight) / 2
 
-    for (let nodeIdx = 0; nodeIdx < level.length; nodeIdx++) {
-      const nodeId = level[nodeIdx]
+    for (let rowIdx = 0; rowIdx < column.length; rowIdx++) {
+      const nodeId = column[rowIdx]
       result.nodes.push({
         id: nodeId,
-        x: offsetX + nodeIdx * spacingX,
-        y: startY + levelIdx * spacingY,
+        x: startX + columnIdx * spacingX,
+        y: offsetY + rowIdx * spacingY,
       })
     }
   }

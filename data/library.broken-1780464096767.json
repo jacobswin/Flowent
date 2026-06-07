@@ -1,0 +1,77 @@
+{
+  "folders": [],
+  "maps": [
+    {
+      "id": "map-mpxmcnai-jxbwu7",
+      "name": "Welcome",
+      "folderId": null,
+      "order": 0,
+      "document": {
+        "id": "map-mpxmcnai-jxbwu7",
+        "nodes": {
+          "start": {
+            "id": "start",
+            "type": "start",
+            "x": 360,
+            "y": 200,
+            "width": 120,
+            "height": 56,
+            "title": "Start",
+            "roleTags": [],
+            "ports": [
+              {
+                "id": "out",
+                "side": "right"
+              }
+            ]
+          }
+        },
+        "edges": {},
+        "selectedNodeIds": [],
+        "selectedEdgeIds": [],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "meta": {
+          "dirty": false,
+          "version": 2
+        }
+      },
+      "updatedAt": 1780464096492
+    }
+  ]
+}  "Engineer"
+            ],
+            "ports": [
+              {
+                "id": "in",
+                "side": "left"
+              },
+              {
+                "id": "out",
+                "side": "right"
+              }
+            ]
+          }
+        },
+        "edges": {},
+        "selectedNodeIds": [
+          "activity-1780464094806"
+        ],
+        "selectedEdgeIds": [],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "meta": {
+          "dirty": false,
+          "version": 13
+        }
+      },
+      "updatedAt": 1780464096491
+    }
+  ]
+}

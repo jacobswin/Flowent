@@ -117,6 +117,53 @@ describe('useCanvasState', () => {
     expect(edge?.targetHandle).toBe('in')
   })
 
+  it('selects an edge and exposes it in the editor state', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+
+    act(() => {
+      result.current.onConnect(source.id, target.id, 'out', 'in')
+    })
+
+    const edge = result.current.edges[0]
+    expect(edge).toBeTruthy()
+
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+
+    expect(result.current.selectedNodeIds.size).toBe(0)
+    expect(result.current.selectedEdgeIds.size).toBe(1)
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+  })
+
+  it('updates edge label data by id', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+
+    act(() => {
+      result.current.onConnect(source.id, target.id, 'out', 'in')
+    })
+
+    const edge = result.current.edges[0]
+
+    act(() => {
+      result.current.updateEdgeData(edge.id, { label: 'PM handoff' })
+    })
+
+    expect(result.current.edges[0]?.data?.label).toBe('PM handoff')
+  })
+
   it('keeps the world point under the cursor anchored when zooming', () => {
     const { result } = renderHook(() => useCanvasState())
 

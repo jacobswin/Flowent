@@ -1,0 +1,94 @@
+{
+  "folders": [],
+  "maps": [
+    {
+      "id": "map-mpxmxrc3-sjwejd",
+      "name": "Welcome",
+      "folderId": null,
+      "order": 0,
+      "document": {
+        "id": "map-mpxmxrc3-sjwejd",
+        "nodes": {
+          "start": {
+            "id": "start",
+            "type": "start",
+            "x": 360,
+            "y": 200,
+            "width": 120,
+            "height": 56,
+            "title": "Start",
+            "roleTags": [],
+            "ports": [
+              {
+                "id": "out",
+                "side": "right"
+              }
+            ]
+          }
+        },
+        "edges": {},
+        "selectedNodeIds": [],
+        "selectedEdgeIds": [],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "meta": {
+          "dirty": false,
+          "version": 2
+        }
+      },
+      "updatedAt": 1780465080967
+    }
+  ]
+}  "ports": [
+              {
+                "id": "in",
+                "side": "left"
+              },
+              {
+                "id": "out",
+                "side": "right"
+              }
+            ]
+          },
+          "activity-1780465079978": {
+            "id": "activity-1780465079978",
+            "type": "activity",
+            "x": 840,
+            "y": 450,
+            "width": 220,
+            "height": 96,
+            "title": "New activity",
+            "summary": "",
+            "roleTags": [],
+            "ports": [
+              {
+                "id": "in",
+                "side": "left"
+              },
+              {
+                "id": "out",
+                "side": "right"
+              }
+            ]
+          }
+        },
+        "edges": {},
+        "selectedNodeIds": [],
+        "selectedEdgeIds": [],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "meta": {
+          "dirty": false,
+          "version": 12
+        }
+      },
+      "updatedAt": 1780465080967
+    }
+  ]
+}

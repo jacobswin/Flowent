@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
+import { sampleBezierMidpoint } from '../routing/edgeLabelAnchor'
 
 export interface DrawEdgesOptions {
   preview?: boolean
@@ -7,6 +8,7 @@ export interface DrawEdgesOptions {
   selectedEdgeIds?: Set<string>
   dimmedEdgeIds?: Set<string>
   onEdgeClick?: (edgeId: string, event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
+  onOpenLabelEditor?: (edgeId: string, anchor: { x: number; y: number }) => void
 }
 
 function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {
@@ -143,12 +145,65 @@ export function drawEdges(
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
           fontSize: 11,
-          fill: 0x86868b,
+          fontWeight: '600',
+          fill: selected ? 0x0071e3 : 0x475569,
         },
       })
-      label.x = (from.x + to.x) / 2 - label.width / 2
-      label.y = (from.y + to.y) / 2 - label.height / 2
+      // Place the label at the cubic-bezier midpoint. We sample the
+      // visible curve at t=0.5 so the label sits on what the user
+      // actually sees, rather than on the control-point segments (which
+      // are non-orthogonal and would mislead the segment-based anchor).
+      const labelCenter = sampleBezierMidpoint(points)
+      const labelWidth = Math.max(label.width, 16)
+      const labelHeight = Math.max(label.height, 16)
+      label.x = labelCenter.x - labelWidth / 2
+      label.y = labelCenter.y - labelHeight / 2
+      label.alpha = dimmed ? 0.22 : 1
+      label.eventMode = 'none'
       layer.addChild(label)
+
+      // A clickable hit pad sitting on top of the label so the label itself
+      // selects its edge. Add the pad to the layer LAST so it sits above
+      // the curve's wider hit pad, then stop the pointer event from
+      // bubbling so we don't double-dispatch SelectEdge (one click = one
+      // selection, one history entry, one version bump).
+      //
+      // We also detect a double-tap here so a quick second tap opens the
+      // inline label editor positioned over the label. Pixi has no native
+      // dblclick, so we approximate it by comparing timestamps on consecutive
+      // pointertap events.
+      const labelPad = new Graphics()
+      labelPad.label = `edge-label-hit:${edge.id}`
+      labelPad.alpha = 0.001
+      labelPad.rect(label.x - 4, label.y - 2, labelWidth + 8, labelHeight + 4)
+      labelPad.fill({ color: 0x000000 })
+      ;(labelPad as Graphics & { eventMode?: string; cursor?: string }).eventMode = 'static'
+      ;(labelPad as Graphics & { eventMode?: string; cursor?: string }).cursor = 'pointer'
+      let lastLabelTap = 0
+      if (options.onEdgeClick) {
+        labelPad.on('pointertap', (event) => {
+          event.stopPropagation?.()
+          const now = Date.now()
+          const isDoubleTap = now - lastLabelTap < 350
+          lastLabelTap = now
+          if (isDoubleTap && options.onOpenLabelEditor) {
+            options.onOpenLabelEditor(edge.id, {
+              // labelPad lives in world coords (inside the same container as
+              // nodes), so the pad's local bounds are world-space. The host
+              // is responsible for converting to viewport/screen coords.
+              x: label.x + labelWidth / 2,
+              y: label.y + labelHeight / 2,
+            })
+            return
+          }
+          options.onEdgeClick?.(edge.id, {
+            shiftKey: event.shiftKey,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+          })
+        })
+      }
+      layer.addChild(labelPad)
     }
   }
 }

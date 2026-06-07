@@ -496,6 +496,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         activation={canvas.activation}
         eligible={canvas.activationEligible.eligible}
         reasons={canvas.activationEligible.reasons}
+        bottlenecks={canvas.bottleneckMetrics}
         onActivate={canvas.activateMap}
       />
 

@@ -17,6 +17,21 @@ describe('ActivationBar', () => {
     expect(screen.getByText('Missing roles')).toBeInTheDocument()
   })
 
+  it('shows bottleneck metrics when at least one bottleneck exists', () => {
+    render(
+      <ActivationBar
+        activation={base}
+        eligible={false}
+        reasons={[]}
+        bottlenecks={{ total: 3, approved: 1, open: 2, openRatio: 2 / 3 }}
+        onActivate={() => {}}
+      />,
+    )
+    expect(screen.getByText(/3 bottlenecks/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 approved/i)).toBeInTheDocument()
+    expect(screen.getByText(/2 open/i)).toBeInTheDocument()
+  })
+
   it('disables the activate button when not eligible', () => {
     render(<ActivationBar activation={base} eligible={false} reasons={[]} onActivate={() => {}} />)
     expect(screen.getByRole('button', { name: /activate map as the agreed process/i })).toBeDisabled()

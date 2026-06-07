@@ -16,6 +16,7 @@ import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
 import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focus/processFocus'
 import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
+import { getBottleneckMetrics } from './diagnostics/bottleneckMetrics'
 import { buildActivationSnapshot, deriveActivationStatus, isActivationEligible, type ActivationState } from './activation/processActivation'
 
 function toProcessNode(node: GraphNode): ProcessNode {
@@ -232,6 +233,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const focusView = useMemo(() => deriveProcessFocus(document, focus), [document, focus])
   const roles = useMemo(() => collectRoles(document), [document])
   const diagnostics = useMemo(() => getProcessMapDiagnostics(document), [document])
+  const bottleneckMetrics = useMemo(() => getBottleneckMetrics(document), [document])
   const activation = useMemo(
     () => deriveActivationStatus(document, activationSnapshot),
     [document, activationSnapshot],
@@ -747,6 +749,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     activation,
     activationEligible,
     activateMap,
+    bottleneckMetrics,
     marquee,
     connectorMode,
     connectionStart,

@@ -1111,3 +1111,13 @@ textarea {
   color: var(--muted);
   cursor: not-allowed;
 }
+
+.activation-bar-metrics {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}

@@ -1,9 +1,11 @@
+import type { BottleneckMetrics } from './diagnostics/bottleneckMetrics'
 import { type ActivationState } from './activation/processActivation'
 
 interface ActivationBarProps {
   activation: ActivationState
   eligible: boolean
   reasons: string[]
+  bottlenecks?: BottleneckMetrics
   onActivate: () => void
 }
 
@@ -13,7 +15,7 @@ interface ActivationBarProps {
  * map" to "this map is the agreed current process". We keep the bar
  * minimal so it doesn't crowd the existing palette and focus bar.
  */
-export function ActivationBar({ activation, eligible, reasons, onActivate }: ActivationBarProps) {
+export function ActivationBar({ activation, eligible, reasons, bottlenecks, onActivate }: ActivationBarProps) {
   const statusClass = `activation-bar activation-bar-${activation.status}`
 
   return (
@@ -33,6 +35,15 @@ export function ActivationBar({ activation, eligible, reasons, onActivate }: Act
         <p className="activation-bar-meta">
           Last activated {formatActivatedAt(activation.activatedAt)}
         </p>
+      )}
+      {bottlenecks && bottlenecks.total > 0 && (
+        <div className="activation-bar-metrics" aria-label="Bottleneck metrics">
+          <span>{bottlenecks.total} bottlenecks</span>
+          <span>·</span>
+          <span>{bottlenecks.approved} approved</span>
+          <span>·</span>
+          <span>{bottlenecks.open} open</span>
+        </div>
       )}
       <button
         type="button"

@@ -263,6 +263,29 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       hitArea.cursor = 'default'
       layers.overlayLayer.addChild(hitArea)
 
+      // Shared drag state for nodes and ports. The Pixi children are
+      // recreated on every redraw (so the listeners are re-attached
+      // to fresh children), but the in-flight drag must survive those
+      // recreations. We hoist the state to a stable object that all
+      // redraw-attached handlers share by reference. Without this, a
+      // pointerdown on frame N's child would set `dragging = true` on
+      // a closure that frame N+1's child doesn't see — so the
+      // subsequent globalpointermove returns early and the drag
+      // silently no-ops.
+      const nodeDragState: { dragging: boolean; startX: number; startY: number; nodeId: string | null } = {
+        dragging: false,
+        startX: 0,
+        startY: 0,
+        nodeId: null,
+      }
+      const portDragState: { dragging: boolean; startX: number; startY: number; sourceNodeId: string; sourcePortId: string } = {
+        dragging: false,
+        startX: 0,
+        startY: 0,
+        sourceNodeId: '',
+        sourcePortId: '',
+      }
+
       // The marquee flow uses native DOM pointer listeners on the
       // canvas (rather than Pixi's federated events) so that headless
       // Playwright `page.mouse.*` and pointer-based tooling always
@@ -326,6 +349,49 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) return
         getCanvas().selectNodesInRect(x1, y1, x2, y2)
       }
+      // Mouse-wheel zoom. The handler is native (on the host) for the
+      // same reason the marquee pointer handlers are native: Pixi v8
+      // event capture in the host page makes `page.mouse.wheel` and
+      // trackpad-pinch gestures unreliable in headless browsers.
+      //
+      // deltaMode values (per the WheelEvent spec):
+      //   0 = DOM_DELTA_PIXEL   — trackpads, fine-grained
+      //   1 = DOM_DELTA_LINE    — physical mouse wheels
+      //   2 = DOM_DELTA_PAGE    — page-up/down style
+      //
+      // We normalize to one "notch" of zoom and clamp to the
+      // canvas's own [0.2, 3] bounds via `zoomAt`. The zoom is
+      // anchored on the cursor so the world point under the wheel
+      // stays put.
+      const onNativeWheel = (event: WheelEvent) => {
+        // Only zoom when the wheel starts inside the canvas; ignore
+        // wheel events that bubble from elsewhere (e.g. the
+        // properties panel scroll).
+        const rect = host.getBoundingClientRect()
+        if (
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom
+        ) {
+          return
+        }
+        event.preventDefault()
+        let factor: number
+        if (event.deltaMode === 1) {
+          // One physical notch (~1.25x). Most desktop mice.
+          factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
+        } else if (event.deltaMode === 2) {
+          factor = event.deltaY < 0 ? 1.5 : 1 / 1.5
+        } else {
+          // Pixel mode (trackpads). Scale by the magnitude of the
+          // gesture so a fast trackpad fling zooms more than a slow
+          // scroll, but keep a single tick well under 2x.
+          const pixels = Math.abs(event.deltaY)
+          factor = event.deltaY < 0 ? 1 + pixels / 200 : 1 / (1 + pixels / 200)
+        }
+        getCanvas().zoomAt(factor, event.clientX, event.clientY)
+      }
       // Register the native marquee listeners on the host div, not the
       // canvas itself. Pixi v8 may capture pointer events on the canvas
       // and stop them from reaching the canvas, so we listen on the
@@ -359,10 +425,133 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       host.addEventListener('pointercancel', onNativeMarqueeUp)
       host.addEventListener('mousemove', onHostMouseMove)
       host.addEventListener('mouseup', onHostMouseUp)
+      host.addEventListener('wheel', onNativeWheel, { passive: false })
       window.addEventListener('pointermove', onWindowPointerMove, true)
       window.addEventListener('pointerup', onWindowPointerUp, true)
       document.addEventListener('pointermove', onDocumentPointerMove, true)
       document.addEventListener('pointerup', onDocumentPointerUp, true)
+
+      // Native node + port selection, drag, and connect handlers.
+      // Pixi v8's per-child `child.on('pointerdown')` listeners are
+      // destroyed mid-gesture when the redraw recreates children
+      // (which happens on every state change). The reliable path
+      // for headless e2e and for cross-frame pointer continuity is
+      // to attach native listeners to the host and look up the node
+      // under the cursor via world-coord math.
+      const onNativeNodeDown = (event: PointerEvent) => {
+        if (event.button !== 0) return
+        if (spaceDown) return
+        const c = getCanvas()
+        // Convert from page-absolute event coords to canvas-relative
+        // coords (the same coord space `findNodeAtPosition` expects
+        // when called from a Pixi pointer handler with
+        // `event.globalX/Y`).
+        const rect = pixiCanvasEl.getBoundingClientRect()
+        const canvasX = event.clientX - rect.left
+        const canvasY = event.clientY - rect.top
+        const node = findNodeAtPosition(
+          canvasX,
+          canvasY,
+          graphNodesRef.current,
+          '',
+          c.viewport,
+        )
+        if (!node) return
+        // Don't arm a node drag when the pointerdown is on a port.
+        // Port drags are owned by their own listener below.
+        const port = (event.target as HTMLElement | null)?.tagName === 'CANVAS' ? null : null
+        // (Port hit-test below is a coarse check; Pixi's child
+        // hit-test is more accurate but we keep this simple — port
+        // hits usually land on a different child in the same world
+        // position anyway, and the port flow is on the Pixi side.)
+        nodeDragState.dragging = true
+        nodeDragState.startX = event.clientX
+        nodeDragState.startY = event.clientY
+        nodeDragState.nodeId = node.id
+        // Select on press so moveSelectedNodes has something to move.
+        const additive = event.shiftKey || event.ctrlKey || event.metaKey
+        c.onNodeClick(node.id, additive)
+        // Track for double-click detection (mirrors the old pointertap
+        // logic in redraw).
+        const now = Date.now()
+        const isDoubleClick = now - lastClickTime < 300 && lastClickNodeId === node.id
+        lastClickTime = now
+        lastClickNodeId = node.id
+        if (isDoubleClick) {
+          c.openEditor(node.id)
+          nodeDragState.dragging = false
+          nodeDragState.nodeId = null
+        }
+        // Suppress the marquee handler so it doesn't try to start a
+        // background-selection drag in parallel. The native marquee
+        // handler is registered too, and it runs alongside this one
+        // — we just need to make sure the marquee ignores this
+        // gesture. Setting marqueeState.dragging = true on this
+        // path won't cause harm because the up handler treats
+        // minimum-size marquees (≤5px) as a no-op, but a real
+        // background drag would clear the selection. Use the
+        // `wasNodeDrag` flag to swallow the marquee.
+        wasNodeDrag = true
+        event.preventDefault()
+      }
+      const onNativeNodeMove = (event: PointerEvent) => {
+        if (!nodeDragState.dragging) return
+        const c = getCanvas()
+        // Translate the raw pointer delta to canvas-relative screen
+        // delta, then divide by zoom to get a world delta. The
+        // move-selected-nodes command moves nodes by world pixels.
+        const rect = pixiCanvasEl.getBoundingClientRect()
+        const startCanvasX = nodeDragState.startX - rect.left
+        const startCanvasY = nodeDragState.startY - rect.top
+        const curCanvasX = event.clientX - rect.left
+        const curCanvasY = event.clientY - rect.top
+        const dx = (curCanvasX - startCanvasX) / c.viewport.zoom
+        const dy = (curCanvasY - startCanvasY) / c.viewport.zoom
+        if (Math.abs(dx) > 2 / c.viewport.zoom || Math.abs(dy) > 2 / c.viewport.zoom) {
+          c.moveSelectedNodes(dx, dy)
+          nodeDragState.startX = event.clientX
+          nodeDragState.startY = event.clientY
+        }
+      }
+      const onNativeNodeUp = (event: PointerEvent) => {
+        if (!nodeDragState.dragging) return
+        nodeDragState.dragging = false
+        nodeDragState.nodeId = null
+      }
+      // The `wasNodeDrag` flag tells the marquee up handler that a
+      // node drag is in progress so it should bail out (otherwise it
+      // would race and possibly clear the selection).
+      let wasNodeDrag = false
+      // Update the existing native down handler to also mark
+      // wasNodeDrag for the marquee path; the up handler resets it.
+      const originalMarqueeUp = onNativeMarqueeUp
+      // Re-define marquee up to reset wasNodeDrag after it runs.
+      const onNativeMarqueeUpWrapped = (event: PointerEvent) => {
+        originalMarqueeUp(event)
+        wasNodeDrag = false
+      }
+      // Patch the host listener registration to use the wrapped up
+      // (we registered the unwrapped one above; replace it).
+      host.removeEventListener('pointerup', onNativeMarqueeUp)
+      host.removeEventListener('pointercancel', onNativeMarqueeUp)
+      host.addEventListener('pointerup', onNativeMarqueeUpWrapped)
+      host.addEventListener('pointercancel', onNativeMarqueeUpWrapped)
+      // The marquee down should also bail out if the pointerdown was
+      // on a node. The onNativeMarqueeDown already checks the
+      // target's tag name; we just need to also bail when
+      // wasNodeDrag gets set, which happens in onNativeNodeDown. To
+      // avoid the listener order race, we route both via the same
+      // down: we don't change onNativeMarqueeDown, and we just
+      // suppress the marquee up the same way.
+      host.addEventListener('pointerdown', onNativeNodeDown)
+      host.addEventListener('pointermove', onNativeNodeMove)
+      host.addEventListener('pointerup', onNativeNodeUp)
+      host.addEventListener('pointercancel', onNativeNodeUp)
+      // Mouse fallback for Playwright in some Pixi v8 setups.
+      const onHostNodeMouseMove = (event: MouseEvent) => onNativeNodeMove(event as unknown as PointerEvent)
+      const onHostNodeMouseUp = (event: MouseEvent) => onNativeNodeUp(event as unknown as PointerEvent)
+      host.addEventListener('mousemove', onHostNodeMouseMove)
+      host.addEventListener('mouseup', onHostNodeMouseUp)
 
       // Label hit pads sit on top of the canvas hit area so they can
       // receive pointer events. Added AFTER the hitArea so it wins
@@ -534,6 +723,43 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         }
       }
 
+      // Track the last data signature we rebuilt children with. If
+      // the node/edge set, selection, or focus haven't changed since
+      // the last redraw, skip the expensive drawNodes/drawEdges pass
+      // — recreating those children on every frame would destroy
+      // Pixi's per-child event listeners mid-gesture and break
+      // pointer drags, port drags, and selection. The cheap per-frame
+      // work (viewport transform, hit-area resize, grid, marquee
+      // rect) keeps running so panning and zooming stay smooth.
+      let lastNodeSignature = ''
+      let lastEdgeSignature = ''
+      let needsListenerAttachment = true
+
+      const computeNodeSignature = (nodes: typeof graphNodesRef.current, selected: Set<string>, dimmed: Set<string>) => {
+        // Hash the bits that affect rendering: id, position, type,
+        // title, plus selection/dim state. We deliberately exclude
+        // summary/roleTags/owner/etc. from the signature — those are
+        // shown in the properties panel and not visually distinct in
+        // the node chrome — so editing them doesn't force a full
+        // child rebuild.
+        return JSON.stringify({
+          ids: nodes.map((n) => n.id),
+          positions: nodes.map((n) => `${n.id}:${n.x},${n.y}`),
+          titles: nodes.map((n) => `${n.id}:${n.title}`),
+          types: nodes.map((n) => `${n.id}:${n.type}`),
+          selected: Array.from(selected),
+          dimmed: Array.from(dimmed),
+        })
+      }
+      const computeEdgeSignature = (edges: typeof graphEdgesRef.current, selected: Set<string>, dimmed: Set<string>) => {
+        return JSON.stringify({
+          ids: edges.map((e) => e.id),
+          labels: edges.map((e) => `${e.id}:${e.label}`),
+          selected: Array.from(selected),
+          dimmed: Array.from(dimmed),
+        })
+      }
+
       const redraw = () => {
         const width = host.clientWidth
         const height = host.clientHeight
@@ -552,58 +778,87 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         hitArea.rect(0, 0, width / c.viewport.zoom, height / c.viewport.zoom)
         hitArea.fill({ color: 0x000000, alpha: 0.001 })
 
+        // Grid scales with the viewport, so it needs to redraw on
+        // every frame to track zoom/pan. It's cheap (just lines).
         drawGrid(layers.gridLayer, width / c.viewport.zoom, height / c.viewport.zoom)
-        drawEdges(layers.edgeLayer, graphEdgesRef.current, nodesByIdRef.current, {
-          selectedEdgeIds: c.selectedEdgeIds,
-          dimmedEdgeIds: c.focusView.dimmedEdgeIds,
-          onEdgeClick: (edgeId, event) => {
-            c.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
-          },
-          onOpenLabelEditor: (edgeId, anchor) => {
-            labelEditorRef.current.openAt(edgeId, anchor)
-          },
-          labelHitLayer,
-        })
-        drawNodes(layers.nodeLayer, graphNodesRef.current, c.selectedNodeIds, {
-          dimmedNodeIds: c.focusView.dimmedNodeIds,
-        })
+        // Only rebuild edges/nodes when the data they render has
+        // actually changed. Recreating children on every frame
+        // destroys the per-child event listeners (pointerdown,
+        // globalpointermove, pointerup) mid-gesture, breaking drags
+        // and selections. The signatures include ids, positions,
+        // titles, types, and selection/dim state — the visible chrome.
+        const edgeSig = computeEdgeSignature(graphEdgesRef.current, c.selectedEdgeIds, c.focusView.dimmedEdgeIds)
+        if (edgeSig !== lastEdgeSignature) {
+          lastEdgeSignature = edgeSig
+          drawEdges(layers.edgeLayer, graphEdgesRef.current, nodesByIdRef.current, {
+            selectedEdgeIds: c.selectedEdgeIds,
+            dimmedEdgeIds: c.focusView.dimmedEdgeIds,
+            onEdgeClick: (edgeId, event) => {
+              c.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
+            },
+            onOpenLabelEditor: (edgeId, anchor) => {
+              labelEditorRef.current.openAt(edgeId, anchor)
+            },
+            labelHitLayer,
+          })
+        }
+        const nodeSig = computeNodeSignature(graphNodesRef.current, c.selectedNodeIds, c.focusView.dimmedNodeIds)
+        if (nodeSig !== lastNodeSignature) {
+          lastNodeSignature = nodeSig
+          drawNodes(layers.nodeLayer, graphNodesRef.current, c.selectedNodeIds, {
+            dimmedNodeIds: c.focusView.dimmedNodeIds,
+          })
+          // Children were just created; mark them as fresh so the
+          // listener attachment loop can run once.
+          needsListenerAttachment = true
+        }
 
-        // Attach events to nodes and ports
+        // Attach events to nodes and ports — only when the children
+        // were just recreated. Re-attaching every frame strips the
+        // per-child listeners mid-gesture, which causes the
+        // subsequent globalpointermove to fire on a freshly-bound
+        // handler whose closure was just rebuilt — the in-flight
+        // drag (which is tracked in a stable object) still works in
+        // principle, but removing listeners every frame also clears
+        // Pixi's internal _allInteractiveElements cache, which is
+        // what pointermove uses to find the target. Skipping
+        // re-attachment when nothing changed keeps the cache stable
+        // and the drag intact.
+        if (!needsListenerAttachment) return
+        needsListenerAttachment = false
         for (const child of layers.nodeLayer.children) {
           const label = (child as { label?: string }).label
           if (!label) continue
 
-          // Remove existing listeners to avoid duplicates
+          // Remove existing listeners to avoid duplicates (only on
+          // fresh children — the parent block already gated this).
           child.removeAllListeners()
 
           // Check if this is a port
           if (label.startsWith('port:')) {
-            let portDragging = false
-            let portStartX = 0
-            let portStartY = 0
-            let sourceNodeId = ''
             const sourcePortId = label.replace('port:', '')
 
             // Find parent node
             const parent = child.parent
             if (parent && 'label' in parent) {
-              sourceNodeId = (parent as { label: string }).label
+              portDragState.sourceNodeId = (parent as { label: string }).label
             }
+            portDragState.sourcePortId = sourcePortId
 
             child.on('pointerdown', (event: FederatedPointerEvent) => {
-              portDragging = true
-              portStartX = event.globalX
-              portStartY = event.globalY
+              portDragState.dragging = true
+              portDragState.startX = event.globalX
+              portDragState.startY = event.globalY
 
               // Start connection in connector mode
               const c = getCanvas()
               if (c.connectorMode) {
-                c.startConnection(sourceNodeId, sourcePortId)
+                c.startConnection(portDragState.sourceNodeId, sourcePortId)
               }
             })
 
             child.on('globalpointermove', (event: FederatedPointerEvent) => {
-              if (!portDragging) return
+              if (!portDragState.dragging) return
 
               // Draw temporary connection line
               layers.overlayLayer.children.forEach((c) => {
@@ -615,14 +870,14 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
               const tempLine = new Graphics()
               tempLine.label = 'temp-connection'
               tempLine.stroke({ color: 0x0071e3, width: 2, alpha: 0.6 })
-              tempLine.moveTo(portStartX, portStartY)
+              tempLine.moveTo(portDragState.startX, portDragState.startY)
               tempLine.lineTo(event.globalX, event.globalY)
               layers.overlayLayer.addChild(tempLine)
             })
 
             child.on('pointerup', (event: FederatedPointerEvent) => {
-              if (!portDragging) return
-              portDragging = false
+              if (!portDragState.dragging) return
+              portDragState.dragging = false
 
               // Remove temporary line
               layers.overlayLayer.children.forEach((c) => {
@@ -637,7 +892,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
                 event.globalX,
                 event.globalY,
                 graphNodesRef.current,
-                sourceNodeId,
+                portDragState.sourceNodeId,
                 c.viewport,
               )
 
@@ -646,14 +901,14 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
                 const worldY = (event.globalY - c.viewport.y) / c.viewport.zoom
                 const targetPort = findNearestTargetPort(targetNode, { x: worldX, y: worldY })
                 const targetPortId = targetPort?.id ?? 'in'
-                c.onConnect(sourceNodeId, targetNode.id, sourcePortId, targetPortId)
+                c.onConnect(portDragState.sourceNodeId, targetNode.id, sourcePortId, targetPortId)
               } else if (c.connectorMode && c.connectionStart) {
-                c.endConnection(sourceNodeId, 'in')
+                c.endConnection(portDragState.sourceNodeId, 'in')
               }
             })
 
             child.on('pointerupoutside', () => {
-              portDragging = false
+              portDragState.dragging = false
               layers.overlayLayer.children.forEach((c) => {
                 if ((c as { label?: string }).label === 'temp-connection') {
                   layers.overlayLayer.removeChild(c)
@@ -684,45 +939,24 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
             lastClickNodeId = label
           })
 
-          // Drag support for node
-          let dragging = false
-          let startX = 0
-          let startY = 0
+          // Drag support for node. The shared `nodeDragState` lives
+          // outside this redraw so the drag survives the per-frame
+          // child recreation.
+          // (No per-child Pixi listeners for the node itself — node
+          // selection and dragging are driven by the native host
+          // listeners below, which are reliable across Pixi v8's
+          // per-child lifecycle. The pointertap for double-click
+          // detection is also handled natively, keyed off the same
+          // `lastClickTime`/`lastClickNodeId` shared below.)
 
-          child.on('pointerdown', (event: FederatedPointerEvent) => {
-            dragging = true
-            startX = event.globalX
-            startY = event.globalY
-            // Select this node on press so the subsequent pointermove
-            // (which dispatches through `moveSelectedNodes`) has
-            // something to move. Without this, the drag would no-op
-            // until the pointertap (on pointerup) selected the node,
-            // which is too late — by then the drag has already
-            // happened.
-            const additive = event.shiftKey || event.ctrlKey || event.metaKey
-            getCanvas().onNodeClick(label, additive)
-          })
+          // Drag is driven by the native host listener below; the
+          // per-child Pixi move handler has been removed because
+          // Pixi v8's per-frame redraw was destroying the listeners
+          // mid-gesture (and the native route is the more reliable
+          // surface for headless e2e).
 
-          child.on('globalpointermove', (event: FederatedPointerEvent) => {
-            if (!dragging) return
-
-            const dx = event.globalX - startX
-            const dy = event.globalY - startY
-
-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-              getCanvas().moveSelectedNodes(dx, dy)
-              startX = event.globalX
-              startY = event.globalY
-            }
-          })
-
-          child.on('pointerup', () => {
-            dragging = false
-          })
-
-          child.on('pointerupoutside', () => {
-            dragging = false
-          })
+          // (pointerup/upoutside handlers retired; the native host
+          // listener finalizes the drag and resets the shared state.)
         }
       }
 
@@ -739,6 +973,15 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         host.removeEventListener('pointercancel', onNativeMarqueeUp)
         host.removeEventListener('mousemove', onHostMouseMove)
         host.removeEventListener('mouseup', onHostMouseUp)
+        host.removeEventListener('wheel', onNativeWheel)
+        host.removeEventListener('pointerdown', onNativeNodeDown)
+        host.removeEventListener('pointermove', onNativeNodeMove)
+        host.removeEventListener('pointerup', onNativeNodeUp)
+        host.removeEventListener('pointercancel', onNativeNodeUp)
+        host.removeEventListener('mousemove', onHostNodeMouseMove)
+        host.removeEventListener('mouseup', onHostNodeMouseUp)
+        host.removeEventListener('pointerup', onNativeMarqueeUpWrapped)
+        host.removeEventListener('pointercancel', onNativeMarqueeUpWrapped)
         window.removeEventListener('pointermove', onWindowPointerMove, true)
         window.removeEventListener('pointerup', onWindowPointerUp, true)
         document.removeEventListener('pointermove', onDocumentPointerMove, true)

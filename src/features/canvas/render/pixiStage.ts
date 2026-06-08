@@ -25,6 +25,11 @@ export async function createPixiStage(host: HTMLDivElement): Promise<PixiStage> 
   // eventMode='static' children behave consistently.
   app.stage.eventMode = 'static'
 
+  // Expose the Pixi Application on the host for e2e debugging and
+  // future tooling. Tests can read pixi.stage.children to inspect
+  // the scene graph and confirm event listeners are attached.
+  ;(host as unknown as { __pixiApp?: Application }).__pixiApp = app
+
   const root = new Container()
   app.stage.addChild(root)
 

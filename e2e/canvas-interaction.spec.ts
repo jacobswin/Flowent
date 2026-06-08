@@ -27,7 +27,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 
   // Add an activity and reset zoom for predictable math. Library gate
   // seeds a "Welcome" map with 1 start node, so the total is now 2.
-  await page.locator('button:has-text("Activity")').click()
+  await page.locator('button[aria-label^="Activity:"]').click()
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
@@ -62,7 +62,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 
   // Re-add an activity and verify positions differ: if the drag worked, the original
   // activity no longer overlaps the new one we drop at the default 300,220.
-  await page.locator('button:has-text("Activity")').click()
+  await page.locator('button[aria-label^="Activity:"]').click()
   await page.waitForTimeout(150)
   const statusFinal = await page.locator(statusBar).textContent()
   expect(statusFinal).toContain('3 nodes')

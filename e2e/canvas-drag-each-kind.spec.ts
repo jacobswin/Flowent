@@ -57,7 +57,7 @@ test('start node can be dragged', async ({ page }) => {
   const box = await page.locator(pixiCanvas).boundingBox()
   if (!box) throw new Error('no pixi canvas')
 
-  await dragNode(page, { x: box.x + 420, y: box.y + 228 }, { x: box.x + 420, y: box.y + 400 })
+  await dragNode(page, { x: box.x + 420, y: box.y + 230 }, { x: box.x + 420, y: box.y + 400 })
 
   const after = await pos('start')
   expect(after).not.toEqual(before)
@@ -98,7 +98,7 @@ test('decision node can be dragged', async ({ page }) => {
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button:has-text("Decision")').click()
+  await page.locator('button[aria-label^="Decision:"]').click()
   await page.waitForTimeout(150)
 
   const box = await page.locator(pixiCanvas).boundingBox()

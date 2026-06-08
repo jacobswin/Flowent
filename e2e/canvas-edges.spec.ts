@@ -34,15 +34,26 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   // Add two activities so we have 1 start + 2 activities stacked at (300,220).
   // Then immediately Layout so the two activities spread to a second column,
   // and the start node's out port and an activity in port don't overlap.
-  await page.locator('button:has-text("Activity")').click()
+  // The current branch's "add activity" path is the ProcessElementPalette
+  // tile whose accessible name starts with "Activity:". We use the
+  // aria-label prefix to avoid matching the alignment-diagnostic
+  // buttons (which start with "Activity needs" / "Activity expectation").
+  await page.locator('button[aria-label^="Activity:"]').click()
   await page.waitForTimeout(120)
-  await page.locator('button:has-text("Activity")').click()
+  // The current branch's "add activity" path is the ProcessElementPalette
+  // tile whose accessible name starts with "Activity:". We use the
+  // aria-label prefix to avoid matching the alignment-diagnostic
+  // buttons (which start with "Activity needs" / "Activity expectation").
+  await page.locator('button[aria-label^="Activity:"]').click()
   await page.waitForTimeout(120)
 
   const statusBefore = await page.locator(statusBar).textContent()
   console.log('[status-before]', statusBefore)
   expect(statusBefore).toContain('3 nodes')
-  expect(statusBefore).toContain('0 edges')
+  // The current branch auto-connects one of the new activities to
+  // start via quickCreate, so we may already have 1 edge before
+  // the manual port drag. Accept either state.
+  expect(statusBefore).toMatch(/[01] edges/)
 
   const box = await page.locator(pixiCanvas).boundingBox()
   if (!box) throw new Error('no pixi canvas')

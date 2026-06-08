@@ -9,6 +9,13 @@ export interface DrawEdgesOptions {
   dimmedEdgeIds?: Set<string>
   onEdgeClick?: (edgeId: string, event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
   onOpenLabelEditor?: (edgeId: string, anchor: { x: number; y: number }) => void
+  /**
+   * Optional layer to receive the clickable label hit pads. When provided, the
+   * pads are added here instead of to the main `layer` so the host can keep
+   * them above other overlays (e.g. the canvas-wide hit area) for correct
+   * z-ordering of label-pointer events.
+   */
+  labelHitLayer?: Container
 }
 
 function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {
@@ -203,7 +210,11 @@ export function drawEdges(
           })
         })
       }
-      layer.addChild(labelPad)
+      // Add the click pad to the dedicated label-hit layer when one was
+      // supplied so the host can keep it above other overlays; otherwise
+      // fall back to the main edge layer (preserves prior behavior for
+      // callers that don't care about z-order).
+      ;(options.labelHitLayer ?? layer).addChild(labelPad)
     }
   }
 }

@@ -153,7 +153,13 @@ function drawPorts(container: Container, node: GraphNode): void {
     const { x, y } = getPortPosition(node, port.id)
     const portCircle = new Graphics()
 
-    // Draw visible port
+    // Draw the port. The circle is shown at low alpha by default
+    // so the canvas doesn't feel busy, and the ProcessCanvas
+    // per-frame pass fades it in when its parent node is
+    // hovered. We tag it with a label so the redraw pass can
+    // find it without iterating every child.
+    portCircle.label = `port-circle:${port.id}`
+    portCircle.alpha = 0.18
     portCircle.circle(x - node.x, y - node.y, portRadius)
     portCircle.fill(0xffffff)
     portCircle.stroke({ color: portColor, width: 2 })

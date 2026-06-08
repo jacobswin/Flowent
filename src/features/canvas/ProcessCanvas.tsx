@@ -703,13 +703,19 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         if (!before.nodes.has(sourceId) || !before.nodes.has(targetId)) return null
         const beforeKeys = new Set(before.edges.keys())
         getCanvas().onConnect(sourceId, targetId, 'out', 'in')
-        // onConnect dispatches through React's setState; wait one
-        // animation frame so the new edge id is visible in the doc.
-        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
-        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
-        const after = canvasRef.current.document.edges
-        for (const [id] of after) {
-          if (!beforeKeys.has(id)) return id
+        // onConnect dispatches through React's setState. Wait for
+        // React to commit (React 19's automatic batching can
+        // delay commits across more than 2 RAFs in tests where
+        // the synthetic event loop is under pressure). We poll
+        // the document until a new edge key appears or 500ms
+        // elapses.
+        const deadline = Date.now() + 500
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+          const after = canvasRef.current.document.edges
+          for (const [id] of after) {
+            if (!beforeKeys.has(id)) return id
+          }
         }
         return null
       }
@@ -766,6 +772,12 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       // rect) keeps running so panning and zooming stay smooth.
       let lastNodeSignature = ''
       let lastEdgeSignature = ''
+      // Track which node (by id) is currently hovered, so the
+      // per-frame port-visibility pass can fade the right
+      // container's ports in. Stored outside the redraw because
+      // the node child instances are recreated on every data
+      // change — the ref keeps the value across re-renders.
+      const hoveredNodeIdRef = { current: null as string | null }
       let needsListenerAttachment = true
 
       const computeNodeSignature = (nodes: typeof graphNodesRef.current, selected: Set<string>, dimmed: Set<string>) => {
@@ -785,9 +797,21 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         })
       }
       const computeEdgeSignature = (edges: typeof graphEdgesRef.current, selected: Set<string>, dimmed: Set<string>) => {
+        // Hash the bits the edge renderer reads: ids, labels, AND
+        // the endpoint node positions. Without positions in the
+        // signature, moving a node wouldn't trigger an edge
+        // re-render — the old Bezier curve would stay anchored
+        // to the stale coordinates while the nodes dragged away.
+        // Also fold the source/target port id so re-pointing a
+        // connector to a different port rebuilds the curve.
         return JSON.stringify({
           ids: edges.map((e) => e.id),
           labels: edges.map((e) => `${e.id}:${e.label}`),
+          endpoints: edges.map((e) => {
+            const s = nodesByIdRef.current.get(e.sourceNodeId)
+            const t = nodesByIdRef.current.get(e.targetNodeId)
+            return `${e.id}:${e.sourcePortId}@${s?.x ?? 0},${s?.y ?? 0}>${e.targetPortId}@${t?.x ?? 0},${t?.y ?? 0}`
+          }),
           selected: Array.from(selected),
           dimmed: Array.from(dimmed),
         })
@@ -844,6 +868,25 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           // Children were just created; mark them as fresh so the
           // listener attachment loop can run once.
           needsListenerAttachment = true
+        }
+
+        // Port hover-visibility pass. Port circles are shown at
+        // low alpha by default (0.18) and faded in to 1.0 when
+        // their parent node container is hovered. The hovered
+        // node id is tracked outside the per-frame redraw so it
+        // survives the child re-creation. Set by
+        // `pointerenter`/`pointerleave` on the node container.
+        const hoveredNodeId = hoveredNodeIdRef.current
+        for (const nodeChild of layers.nodeLayer.children) {
+          const isHovered = (nodeChild as { label?: string }).label === hoveredNodeId
+          for (const sub of (nodeChild as { children?: { label?: string; alpha?: number; visible?: boolean }[] }).children ?? []) {
+            if (sub.label && sub.label.startsWith('port-circle:')) {
+              const desiredAlpha = isHovered ? 1 : 0.18
+              if ((sub.alpha ?? 1) !== desiredAlpha) {
+                sub.alpha = desiredAlpha
+              }
+            }
+          }
         }
 
         // Attach events to nodes and ports — only when the children
@@ -970,6 +1013,19 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
 
             lastClickTime = now
             lastClickNodeId = label
+          })
+
+          // Hover-to-reveal ports. We track the hovered node id
+          // in a stable ref so the value survives the per-frame
+          // child re-creation. Use `pointerenter` /
+          // `pointerleave` (not `over`/`out`) so the flag
+          // doesn't flicker when the pointer moves between a
+          // child port and the body of the same node.
+          child.on('pointerenter', () => {
+            hoveredNodeIdRef.current = label
+          })
+          child.on('pointerleave', () => {
+            hoveredNodeIdRef.current = null
           })
 
           // Drag support for node. The shared `nodeDragState` lives

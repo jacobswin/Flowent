@@ -58,7 +58,7 @@ function NodeEditor({ node, onUpdate }: NodeEditorProps) {
   }
 
   if (data.kind === 'activity') {
-    return <ActivityEditor nodeId={node.id} title={data.title} summary={data.summary} expectations={data.expectations ?? ''} onUpdate={onUpdate} />
+    return <ActivityEditor nodeId={node.id} title={data.title} summary={data.summary} roleIds={data.roleIds} expectations={data.expectations ?? ''} onUpdate={onUpdate} />
   }
 
   if (data.kind === 'decision') {
@@ -80,18 +80,39 @@ interface ActivityEditorProps {
   nodeId: string
   title: string
   summary: string
+  roleIds: string[]
   expectations: string
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }
 
-function ActivityEditor({ nodeId, title, summary, expectations, onUpdate }: ActivityEditorProps) {
+function ActivityEditor({ nodeId, title, summary, roleIds, expectations, onUpdate }: ActivityEditorProps) {
   const [titleDraft, setTitleDraft] = useDraft(title)
   const [summaryDraft, setSummaryDraft] = useDraft(summary)
   const [expectationsDraft, setExpectationsDraft] = useDraft(expectations)
+  // Local draft for the role-tag input. The committed list lives in
+  // the document; the input just adds new tags on Enter.
+  const [roleDraft, setRoleDraft] = useDraft('')
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
     onUpdate(nodeId, { title: titleDraft, summary: summaryDraft, expectations: expectationsDraft })
+  }
+
+  function handleRoleKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (event.key !== 'Enter' && event.key !== ',') return
+    event.preventDefault()
+    const trimmed = roleDraft.trim()
+    if (!trimmed) return
+    if (roleIds.includes(trimmed)) {
+      setRoleDraft('')
+      return
+    }
+    onUpdate(nodeId, { roleIds: [...roleIds, trimmed] })
+    setRoleDraft('')
+  }
+
+  function handleRoleRemove(role: string): void {
+    onUpdate(nodeId, { roleIds: roleIds.filter((r) => r !== role) })
   }
 
   return (
@@ -99,6 +120,7 @@ function ActivityEditor({ nodeId, title, summary, expectations, onUpdate }: Acti
       <label htmlFor={makeFieldId('activity', 'Title')}>Title</label>
       <input
         id={makeFieldId('activity', 'Title')}
+        autoFocus
         value={titleDraft}
         onChange={(e) => setTitleDraft(e.target.value)}
         onBlur={() => onUpdate(nodeId, { title: titleDraft })}
@@ -119,6 +141,43 @@ function ActivityEditor({ nodeId, title, summary, expectations, onUpdate }: Acti
         onBlur={() => onUpdate(nodeId, { expectations: expectationsDraft })}
         rows={3}
       />
+      <label htmlFor={makeFieldId('activity', 'Add role')}>Add role</label>
+      <input
+        id={makeFieldId('activity', 'Add role')}
+        className="properties-role-input"
+        value={roleDraft}
+        onChange={(e) => setRoleDraft(e.target.value)}
+        onKeyDown={handleRoleKeyDown}
+        onBlur={() => {
+          // Commit any pending text on blur (treat as a soft commit).
+          const trimmed = roleDraft.trim()
+          if (!trimmed) return
+          if (roleIds.includes(trimmed)) {
+            setRoleDraft('')
+            return
+          }
+          onUpdate(nodeId, { roleIds: [...roleIds, trimmed] })
+          setRoleDraft('')
+        }}
+        placeholder="Type a role and press Enter"
+      />
+      {roleIds.length > 0 && (
+        <ul className="role-tag-chips" aria-label="Role tags">
+          {roleIds.map((role) => (
+            <li key={role} className="role-tag-chip">
+              <span>{role}</span>
+              <button
+                type="button"
+                className="role-tag-chip-remove"
+                onClick={() => handleRoleRemove(role)}
+                aria-label={`Remove role ${role}`}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </form>
   )
 }

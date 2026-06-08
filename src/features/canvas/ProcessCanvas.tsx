@@ -26,17 +26,27 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     // so LibraryGate can pass them through without a type error. The plan
     // flags full LibraryGate integration as out of scope for the foundation.
   }
-  const canvas = useCanvasState()
+  // Use the prop-derived onAutosave (if any) so the canvas state
+  // can flush its debounced save back up to the LibraryGate. The
+  // canvas state hook fires the callback 500ms after the last edit;
+  // LibraryGate uses it to PATCH the document to the server. If
+  // this prop is omitted (e.g. for ad-hoc canvases that don't
+  // round-trip through the library), the canvas simply runs
+  // without autosave — there's no warning because not every
+  // canvas consumer wants persistence.
+  const canvas = useCanvasState({ initialDocument: props.initialDocument, onAutosave: props.onAutosave })
   const hostRef = useRef<HTMLDivElement | null>(null)
   // Keep a ref pointing to the latest canvas state so async-init closures
   // (Pixi stage, test hooks) can read fresh data, not the snapshot
-  // captured when the async stage init first resolved. The sync runs
-  // during render so that any closure reading the ref at a later point
-  // in the same render cycle sees the new value.
-  /* eslint-disable react-hooks/refs */
+  // captured when the async stage init first resolved. The .current
+  // is updated in a useEffect (not during render) to satisfy React 19
+  // strict refs rules; the listener ref reads on the next tick are
+  // always one render behind, which is fine because the listeners
+  // themselves don't depend on same-tick canvas writes.
   const canvasRef = useRef(canvas)
-  canvasRef.current = canvas
-  /* eslint-enable react-hooks/refs */
+  useEffect(() => {
+    canvasRef.current = canvas
+  }, [canvas])
 
 
   // On-canvas inline label editor. The editor opens when the user
@@ -49,6 +59,14 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     }, [canvas]),
   )
   const labelInputRef = useRef<HTMLInputElement | null>(null)
+  // Keep a stable ref to the latest label editor so the Pixi stage
+  // (which mounts once) can call `openAt` on the current instance
+  // without re-running its mount effect. Synced via useEffect to
+  // satisfy React 19's strict refs-during-render rules.
+  const labelEditorRef = useRef(labelEditor)
+  useEffect(() => {
+    labelEditorRef.current = labelEditor
+  }, [labelEditor])
   // The label editor positions itself relative to the .pixi-host's
   // bounding rect. We read that rect in an effect (not during render)
   // and cache the values so the inline IIFE below can read them safely.
@@ -187,6 +205,28 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     return map
   }, [graphNodes])
 
+  // Refs for derived data that the Pixi stage and pointer handlers
+  // read. The .current is synced every render so async closures
+  // (Pixi stage init, native listeners) always see the latest
+  // derived state without tearing down the stage on every mutation.
+  // `useRef` returns a stable object across renders, so the long-
+  // lived listeners inside the useEffect (which only runs on mount)
+  // always see the same ref object whose .current gets updated on
+  // every render. Synced via useEffect to satisfy React 19 strict
+  // refs-during-render rules.
+  const graphEdgesRef = useRef(graphEdges)
+  const graphNodesRef = useRef(graphNodes)
+  const nodesByIdRef = useRef(nodesById)
+  useEffect(() => {
+    graphEdgesRef.current = graphEdges
+  }, [graphEdges])
+  useEffect(() => {
+    graphNodesRef.current = graphNodes
+  }, [graphNodes])
+  useEffect(() => {
+    nodesByIdRef.current = nodesById
+  }, [nodesById])
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -194,22 +234,11 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     let disposed = false
     let destroy: (() => void) | null = null
 
-    // Refs to derived data that the Pixi stage + native pointer
-    // handlers read. We use refs (not closure captures) because the
-    // stage must outlive React re-renders. Without refs the effect
-    // would have to re-run on every state change — destroying the
-    // stage and recreating all listeners — which would race with
-    // in-flight pointer interactions and lose marquee state. The
-    // sync `current =` lines run during the effect setup so the
-    // refs are populated before any closure reads them.
-    const graphEdgesRef = { current: graphEdges }
-    graphEdgesRef.current = graphEdges
-    const graphNodesRef = { current: graphNodes }
-    graphNodesRef.current = graphNodes
-    const nodesByIdRef = { current: nodesById }
-    nodesByIdRef.current = nodesById
-    const labelEditorRef = { current: labelEditor }
-    labelEditorRef.current = labelEditor
+    // The derived-data refs (graphNodesRef, graphEdgesRef, etc.)
+    // and canvasRef live in the component body so they're synced
+    // every render — see the ref declarations above this effect.
+    // The Pixi stage and its listeners are created here, once on
+    // mount, and live for the lifetime of the component.
 
     // Inside the effect we use `canvas = canvasRef.current` at every
     // call site so listeners and the redraw ticker see the latest
@@ -458,12 +487,11 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         )
         if (!node) return
         // Don't arm a node drag when the pointerdown is on a port.
-        // Port drags are owned by their own listener below.
-        const port = (event.target as HTMLElement | null)?.tagName === 'CANVAS' ? null : null
-        // (Port hit-test below is a coarse check; Pixi's child
-        // hit-test is more accurate but we keep this simple — port
-        // hits usually land on a different child in the same world
-        // position anyway, and the port flow is on the Pixi side.)
+        // Port drags are owned by the port-side handler below; we
+        // don't have a native port listener yet so the existing
+        // Pixi-side port flow still handles the visual feedback
+        // (see the per-frame redraw loop). When a native port
+        // hit-test is added, gate this branch on it.
         nodeDragState.dragging = true
         nodeDragState.startX = event.clientX
         nodeDragState.startY = event.clientY
@@ -471,8 +499,12 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         // Select on press so moveSelectedNodes has something to move.
         const additive = event.shiftKey || event.ctrlKey || event.metaKey
         c.onNodeClick(node.id, additive)
-        // Track for double-click detection (mirrors the old pointertap
-        // logic in redraw).
+        // Track for double-click detection. Two pointerdowns within
+        // 300ms on the same node open the properties panel. We use
+        // the native down handler for this (instead of Pixi's
+        // pointertap) because pointertap never fired reliably across
+        // the per-frame child recreation; native pointerdown is the
+        // canonical event source.
         const now = Date.now()
         const isDoubleClick = now - lastClickTime < 300 && lastClickNodeId === node.id
         lastClickTime = now
@@ -486,12 +518,10 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         // background-selection drag in parallel. The native marquee
         // handler is registered too, and it runs alongside this one
         // — we just need to make sure the marquee ignores this
-        // gesture. Setting marqueeState.dragging = true on this
-        // path won't cause harm because the up handler treats
-        // minimum-size marquees (≤5px) as a no-op, but a real
-        // background drag would clear the selection. Use the
-        // `wasNodeDrag` flag to swallow the marquee.
-        wasNodeDrag = true
+        // The wrapped marquee up handler (below) bails out when a
+        // node drag is in progress, so the click on a node
+        // doesn't also clear the selection via a coincident
+        // marquee-up.
         event.preventDefault()
       }
       const onNativeNodeMove = (event: PointerEvent) => {
@@ -513,25 +543,28 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           nodeDragState.startY = event.clientY
         }
       }
-      const onNativeNodeUp = (event: PointerEvent) => {
+      // The pointerup handler intentionally ignores the event arg
+      // (we already have everything we need from the shared
+      // `nodeDragState`); the optional signature just lets the
+      // mouseup fallback pass its MouseEvent through.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const onNativeNodeUp = (_?: PointerEvent): void => {
         if (!nodeDragState.dragging) return
         nodeDragState.dragging = false
         nodeDragState.nodeId = null
       }
-      // The `wasNodeDrag` flag tells the marquee up handler that a
-      // node drag is in progress so it should bail out (otherwise it
-      // would race and possibly clear the selection).
-      let wasNodeDrag = false
-      // Update the existing native down handler to also mark
-      // wasNodeDrag for the marquee path; the up handler resets it.
-      const originalMarqueeUp = onNativeMarqueeUp
-      // Re-define marquee up to reset wasNodeDrag after it runs.
+      // Wrap the existing marquee up handler so that a node drag
+      // can suppress the marquee's selection-clear side effect.
+      // Without this, a node drag that ends without movement would
+      // still clear the selection because the marquee up handler
+      // always clears when its start and end coincide.
       const onNativeMarqueeUpWrapped = (event: PointerEvent) => {
-        originalMarqueeUp(event)
-        wasNodeDrag = false
+        // If a node drag is in progress, swallow the marquee
+        // up entirely — the node drag is the user's intent and
+        // we don't want a tiny marquee to clear the selection.
+        if (nodeDragState.dragging) return
+        onNativeMarqueeUp(event)
       }
-      // Patch the host listener registration to use the wrapped up
-      // (we registered the unwrapped one above; replace it).
       host.removeEventListener('pointerup', onNativeMarqueeUp)
       host.removeEventListener('pointercancel', onNativeMarqueeUp)
       host.addEventListener('pointerup', onNativeMarqueeUpWrapped)
@@ -998,7 +1031,6 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       disposed = true
       destroy?.()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     // Empty deps: the Pixi stage and pointer listeners are created
     // once on mount and live for the lifetime of the component. The

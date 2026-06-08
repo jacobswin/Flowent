@@ -308,6 +308,46 @@ textarea {
   min-height: 60px;
 }
 
+.role-tag-chips {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.role-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.role-tag-chip-remove {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.role-tag-chip-remove:hover {
+  background: rgba(0, 113, 227, 0.18);
+}
+
 .properties-hint {
   padding: 12px 16px;
   font-size: 13px;
@@ -969,10 +1009,14 @@ textarea {
 .alignment-checklist {
   position: absolute;
   right: 18px;
-  bottom: 98px;
+  /* Sit below the process-element palette (top: 96px, plus its
+   * own height) so the two side panels never overlap. The
+   * bottom anchor would otherwise collide with the palette
+   * when the checklist grows. */
+  top: 540px;
   z-index: 8;
-  width: 300px;
-  max-height: 34vh;
+  width: 240px;
+  max-height: calc(100vh - 560px);
   overflow: auto;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);

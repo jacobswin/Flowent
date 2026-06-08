@@ -21,9 +21,9 @@ test('canvas loads with toolbar and title', async ({ page }) => {
 })
 
 test('toolbar exposes the primary actions', async ({ page }) => {
-  await expect(page.locator('button:has-text("Activity")')).toBeVisible()
-  await expect(page.locator('button:has-text("Decision")')).toBeVisible()
-  await expect(page.locator('button:has-text("End")')).toBeVisible()
+  await expect(page.locator('button[aria-label^="Activity:"]')).toBeVisible()
+  await expect(page.locator('button[aria-label^="Decision:"]')).toBeVisible()
+  await expect(page.locator('button[aria-label^="End:"]')).toBeVisible()
   await expect(page.locator('button:has-text("Layout")')).toBeVisible()
 })
 

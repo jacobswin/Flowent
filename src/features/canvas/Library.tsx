@@ -473,7 +473,7 @@ function NewMapForm({
         {PROCESS_MAP_TEMPLATES.find((template) => template.id === templateId)?.description}
       </div>
       <div className="library-new-actions">
-        <button type="submit">Create</button>
+        <button type="submit" aria-label="Confirm">Create</button>
         <button type="button" onClick={onCancel}>Cancel</button>
       </div>
     </form>

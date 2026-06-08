@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { type FormEvent } from 'react'
 import type { ProcessEdge, ProcessNode } from './canvasTypes'
 import { REVIEW_STATUS_OPTIONS, isReviewStatusValue } from './reviewStatus'
+import { useDraft } from './useDraft'
 
 function makeFieldId(prefix: string, label: string): string {
   // Stable per label so a double-click into the same node keeps the
@@ -84,9 +85,9 @@ interface ActivityEditorProps {
 }
 
 function ActivityEditor({ nodeId, title, summary, expectations, onUpdate }: ActivityEditorProps) {
-  const [titleDraft, setTitleDraft] = useState(title)
-  const [summaryDraft, setSummaryDraft] = useState(summary)
-  const [expectationsDraft, setExpectationsDraft] = useState(expectations)
+  const [titleDraft, setTitleDraft] = useDraft(title)
+  const [summaryDraft, setSummaryDraft] = useDraft(summary)
+  const [expectationsDraft, setExpectationsDraft] = useDraft(expectations)
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
@@ -132,16 +133,16 @@ interface DecisionEditorProps {
 }
 
 function DecisionEditor({ nodeId, title, criteria, owner, decisionOutcomes, onUpdate }: DecisionEditorProps) {
-  const [titleDraft, setTitleDraft] = useState(title)
-  const [criteriaDraft, setCriteriaDraft] = useState(criteria)
-  const [ownerDraft, setOwnerDraft] = useState(owner)
-  const [outcomesDraft, setOutcomesDraft] = useState(decisionOutcomes.join('\n'))
+  const [titleDraft, setTitleDraft] = useDraft(title)
+  const [criteriaDraft, setCriteriaDraft] = useDraft(criteria)
+  const [ownerDraft, setOwnerDraft] = useDraft(owner)
+  const [outcomesDraft, setOutcomesDraft] = useDraft(decisionOutcomes.join('\n'))
 
   function commitOutcomes(): void {
     const next = outcomesDraft
       .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.length > 0)
     onUpdate(nodeId, { decisionOutcomes: next })
   }
 
@@ -279,7 +280,7 @@ function SemanticTextInput({
   value: string
   onCommit: (value: string) => void
 }) {
-  const [draft, setDraft] = useState(value)
+  const [draft, setDraft] = useDraft(value)
   const id = makeFieldId(prefix, label)
   return (
     <>
@@ -308,7 +309,7 @@ function SemanticTextArea({
   value: string
   onCommit: (value: string) => void
 }) {
-  const [draft, setDraft] = useState(value)
+  const [draft, setDraft] = useDraft(value)
   const id = makeFieldId(prefix, label)
   return (
     <>

@@ -29,7 +29,7 @@ vi.mock('pixi.js', async () => {
 })
 
 import { Container } from 'pixi.js'
-import { drawEdges } from './drawEdges'
+import { drawEdges, getDisplayEdgeLabel, getSelectedEdgeMetadataText } from './drawEdges'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
 function makeNode(id: string, x: number, y: number): GraphNode {
@@ -95,5 +95,26 @@ describe('drawEdges labelHitLayer', () => {
 
     expect(mainLabelHits).toHaveLength(0)
     expect(overlayLabelHits).toHaveLength(1)
+  })
+})
+
+describe('drawEdges visual helpers', () => {
+  it('uses a product-specific placeholder label when the edge has no label', () => {
+    expect(getDisplayEdgeLabel('')).toBe('Add handoff label')
+    expect(getDisplayEdgeLabel(undefined)).toBe('Add handoff label')
+    expect(getDisplayEdgeLabel('PM handoff')).toBe('PM handoff')
+  })
+
+  it('formats selected-edge metadata compactly from roles and artifact', () => {
+    expect(
+      getSelectedEdgeMetadataText({
+        fromRole: 'PM',
+        toRole: 'Engineer',
+        artifact: 'Ready brief',
+      }),
+    ).toBe('PM → Engineer · Ready brief')
+
+    expect(getSelectedEdgeMetadataText({ artifact: 'Ready brief' })).toBe('Ready brief')
+    expect(getSelectedEdgeMetadataText({})).toBe('')
   })
 })

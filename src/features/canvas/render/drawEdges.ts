@@ -18,7 +18,7 @@ export interface DrawEdgesOptions {
   labelHitLayer?: Container
 }
 
-function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {
+export function getPortPosition(node: { x: number; y: number; width: number; height: number; ports: { id: string; side: string }[] }, portId: string): { x: number; y: number } {
   const port = node.ports.find((p) => p.id === portId)
   const side = port?.side ?? 'bottom'
 
@@ -63,21 +63,40 @@ const EDGE_STROKE = 0xc4c4c6
 const EDGE_WIDTH = 1.5
 const EDGE_SELECTED_STROKE = 0x0071e3
 const EDGE_SELECTED_WIDTH = 2.5
+const EDGE_SELECTED_HALO_STROKE = 0x93c5fd
+const EDGE_SELECTED_HALO_WIDTH = 6
 const EDGE_HIT_WIDTH = 12
 
-function drawRoute(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number } = {}): void {
-  const color = options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE
+export function getDisplayEdgeLabel(label?: string): string {
+  const normalized = label?.trim() ?? ''
+  return normalized.length > 0 ? normalized : 'Add handoff label'
+}
+
+export function getSelectedEdgeMetadataText(edge: Pick<GraphEdge, 'fromRole' | 'toRole' | 'artifact'>): string {
+  const roleText = edge.fromRole && edge.toRole
+    ? `${edge.fromRole} → ${edge.toRole}`
+    : edge.fromRole ?? edge.toRole ?? ''
+  const artifactText = edge.artifact?.trim() ?? ''
+
+  if (roleText && artifactText) return `${roleText} · ${artifactText}`
+  return roleText || artifactText || ''
+}
+
+function drawRoute(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
+  const color = options.colorOverride ?? (options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE)
   const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
-  graphics.stroke({ color, width })
+  const alpha = options.alphaOverride ?? 1
+  graphics.stroke({ color, width, alpha })
   graphics.moveTo(points.from.x, points.from.y)
   graphics.bezierCurveTo(points.cp1.x, points.cp1.y, points.cp2.x, points.cp2.y, points.to.x, points.to.y)
 }
 
-function drawArrow(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number } = {}): void {
-  const color = options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE
+function drawArrow(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
+  const color = options.colorOverride ?? (options.selected ? EDGE_SELECTED_STROKE : EDGE_STROKE)
   const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
+  const alpha = options.alphaOverride ?? 1
   const { arrow1, arrow2 } = getArrowPoints(points.from, points.to, points.cp2)
-  graphics.stroke({ color, width })
+  graphics.stroke({ color, width, alpha })
   graphics.moveTo(points.to.x, points.to.y)
   graphics.lineTo(arrow1.x, arrow1.y)
   graphics.moveTo(points.to.x, points.to.y)
@@ -98,6 +117,10 @@ export function drawEdges(
       : optionsOrSelected
 
   layer.removeChildren()
+  // If a dedicated overlay layer is used for label hit pads, clear it
+  // too before repopulating. Otherwise stale pads from the previous
+  // frame would remain interactive at their old positions.
+  options.labelHitLayer?.removeChildren()
 
   for (const edge of edges) {
     const source = nodesById.get(edge.sourceNodeId)
@@ -117,6 +140,27 @@ export function drawEdges(
     }
 
     // Visible curve and arrow
+    // Draw the selected-edge halo first so it sits underneath the main stroke.
+    if (selected) {
+      const halo = new Graphics()
+      halo.label = `edge-halo:${edge.id}`
+      halo.eventMode = 'none'
+      halo.alpha = dimmed ? 0.22 : 1
+      drawRoute(halo, points, {
+        ...options,
+        widthOverride: EDGE_SELECTED_HALO_WIDTH,
+        colorOverride: EDGE_SELECTED_HALO_STROKE,
+        alphaOverride: 0.9,
+      })
+      drawArrow(halo, points, {
+        ...options,
+        widthOverride: EDGE_SELECTED_HALO_WIDTH,
+        colorOverride: EDGE_SELECTED_HALO_STROKE,
+        alphaOverride: 0.9,
+      })
+      layer.addChild(halo)
+    }
+
     const curve = new Graphics()
     curve.label = `edge:${edge.id}`
     ;(curve as Graphics & { eventMode?: string }).eventMode = 'none'
@@ -145,15 +189,16 @@ export function drawEdges(
     }
     layer.addChild(hit)
 
-    if (edge.label) {
+    {
+      const labelText = getDisplayEdgeLabel(edge.label)
       const label = new Text({
-        text: edge.label,
+        text: labelText,
         style: {
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
           fontSize: 11,
           fontWeight: '600',
-          fill: selected ? 0x0071e3 : 0x475569,
+          fill: selected ? 0x0071e3 : edge.label ? 0x475569 : 0xb8c2cf,
         },
       })
       // Place the label at the cubic-bezier midpoint. We sample the
@@ -168,6 +213,27 @@ export function drawEdges(
       label.alpha = dimmed ? 0.22 : 1
       label.eventMode = 'none'
       layer.addChild(label)
+
+      if (selected) {
+        const metadata = getSelectedEdgeMetadataText(edge)
+        if (metadata) {
+          const meta = new Text({
+            text: metadata,
+            style: {
+              fontFamily:
+                '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+              fontSize: 10,
+              fontWeight: '500',
+              fill: 0x64748b,
+            },
+          })
+          meta.x = labelCenter.x - meta.width / 2
+          meta.y = labelCenter.y + labelHeight / 2 + 4
+          meta.alpha = dimmed ? 0.22 : 1
+          meta.eventMode = 'none'
+          layer.addChild(meta)
+        }
+      }
 
       // A clickable hit pad sitting on top of the label so the label itself
       // selects its edge. Add the pad to the layer LAST so it sits above

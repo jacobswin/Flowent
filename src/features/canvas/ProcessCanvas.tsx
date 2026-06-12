@@ -11,6 +11,7 @@ import { createPixiStage } from './render/pixiStage'
 import { createCanvasLayers, drawGrid } from './render/layers'
 import { drawNodes } from './render/drawNodes'
 import { drawEdges } from './render/drawEdges'
+import { getPortPosition } from './render/drawEdges'
 import { findNearestTargetPort, getPortAnchor } from './routing/ports'
 import { routeOrthogonalEdge } from './routing/orthogonalRouter'
 import { mapKeyToAction } from './engine/keyboard'
@@ -193,6 +194,9 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           targetNodeId: e.target,
           targetPortId: e.targetHandle ?? 'in',
           label: e.data?.label ?? '',
+          fromRole: e.data?.fromRole ?? '',
+          toRole: e.data?.toRole ?? '',
+          artifact: e.data?.artifact ?? '',
         })),
     [canvas.edges],
   )
@@ -256,15 +260,6 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         return
       }
       const pixiCanvasEl: HTMLCanvasElement = stage.app.canvas
-      // Expose the canvas DOM node for tests and debug tooling. Tests
-      // that need to assert screen-vs-canvas coordinates can read
-      // size + parent off this hook without a Pixi app reference.
-      ;(window as unknown as { __flowentPixiCanvasEl?: unknown }).__flowentPixiCanvasEl = {
-        tag: pixiCanvasEl.tagName,
-        width: pixiCanvasEl.width,
-        height: pixiCanvasEl.height,
-        parentTag: pixiCanvasEl.parentElement?.tagName ?? 'null',
-      }
 
       destroy = stage.destroy
 
@@ -314,6 +309,16 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         sourceNodeId: '',
         sourcePortId: '',
       }
+      // Port click state for the click-to-connect flow (Connect
+      // mode). Distinct from portDragState (which is for the drag
+      // flow that's still on the Pixi side). The first click on a
+      // port while connectorMode is on calls `startConnection`;
+      // the second click on a different port calls `endConnection`
+      // and clears the connector start.
+      const portClickState: { sourceNodeId: string | null; sourcePortId: string | null } = {
+        sourceNodeId: null,
+        sourcePortId: null,
+      }
 
       // The marquee flow uses native DOM pointer listeners on the
       // canvas (rather than Pixi's federated events) so that headless
@@ -334,8 +339,9 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       // matter which closure incarnation the listeners live in
       // (React StrictMode re-runs can re-create closures between
       // the down and the move).
-      const marqueeState: { dragging: boolean; startX: number; startY: number } = {
+      const marqueeState: { dragging: boolean; claimed: boolean; startX: number; startY: number } = {
         dragging: false,
+        claimed: false,
         startX: 0,
         startY: 0,
       }
@@ -349,10 +355,10 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         event.preventDefault()
         const start = screenToWorld(event.clientX, event.clientY)
         marqueeState.dragging = true
+        marqueeState.claimed = false
         marqueeState.startX = start.x
         marqueeState.startY = start.y
         marqueeRect.visible = true
-        getCanvas().onPaneClick()
       }
       const onNativeMarqueeMove = (event: PointerEvent) => {
         if (!marqueeState.dragging) return
@@ -375,8 +381,16 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         const y1 = Math.min(marqueeState.startY, end.y)
         const x2 = Math.max(marqueeState.startX, end.x)
         const y2 = Math.max(marqueeState.startY, end.y)
-        if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) return
-        getCanvas().selectNodesInRect(x1, y1, x2, y2)
+        const draggedFar = Math.abs(x2 - x1) >= 5 || Math.abs(y2 - y1) >= 5
+        if (marqueeState.claimed) {
+          marqueeState.claimed = false
+          return
+        }
+        if (draggedFar) {
+          getCanvas().selectNodesInRect(x1, y1, x2, y2)
+        } else {
+          getCanvas().onPaneClick()
+        }
       }
       // Mouse-wheel zoom. The handler is native (on the host) for the
       // same reason the marquee pointer handlers are native: Pixi v8
@@ -478,6 +492,66 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         const rect = pixiCanvasEl.getBoundingClientRect()
         const canvasX = event.clientX - rect.left
         const canvasY = event.clientY - rect.top
+
+        // Port-first hit-test. When the pointer is over a port hit
+        // area, route to the click-to-connect flow instead of the
+        // node drag. We also short-circuit the node selection /
+        // marquee clearing so a port click doesn't both start a
+        // connection AND select the source node.
+        const portHit = findPortAtPosition(
+          canvasX,
+          canvasY,
+          canvasRef.current.document.nodes,
+          c.viewport,
+        )
+        if (portHit) {
+          // First click in Connect mode (or any time) sets the
+          // source. Second click on a different port calls
+          // onConnect directly and clears the source. We track
+          // the connection start in `portClickState` (a stable
+          // ref) because the React `connectionStart` state hasn't
+          // propagated by the time the second click handler runs.
+          // Click-to-connect: any two port clicks form a
+          // connection. No Connect-mode toggle required. The
+          // first click on a port sets the source. The second
+          // click on a different port creates the edge via
+          // onConnect. We track the source in `portClickState`
+          // (a stable ref) rather than the React `connectionStart`
+          // because the latter hasn't propagated by the time the
+          // second click handler runs — using onConnect
+          // synchronously avoids that race.
+          event.preventDefault()
+          marqueeState.claimed = true
+          if (!portClickState.sourceNodeId) {
+            portClickState.sourceNodeId = portHit.nodeId
+            portClickState.sourcePortId = portHit.portId
+            c.startConnection(portHit.nodeId, portHit.portId)
+          } else if (
+            portClickState.sourceNodeId === portHit.nodeId &&
+            portClickState.sourcePortId === portHit.portId
+          ) {
+            // Same port clicked twice — cancel the connection.
+            portClickState.sourceNodeId = null
+            portClickState.sourcePortId = null
+          } else {
+            // Second click on a different port: create the edge
+            // directly via onConnect (synchronous, sidesteps the
+            // React-state propagation race in c.endConnection).
+            // The non-null assertions are safe because the outer
+            // `if (!sourceNodeId)` and `else if (same port)`
+            // branches cover all other cases.
+            c.onConnect(
+              portClickState.sourceNodeId!,
+              portHit.nodeId,
+              portClickState.sourcePortId!,
+              portHit.portId,
+            )
+            portClickState.sourceNodeId = null
+            portClickState.sourcePortId = null
+          }
+          return
+        }
+
         const node = findNodeAtPosition(
           canvasX,
           canvasY,
@@ -486,6 +560,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           c.viewport,
         )
         if (!node) return
+        marqueeState.claimed = true
         // Don't arm a node drag when the pointerdown is on a port.
         // Port drags are owned by the port-side handler below; we
         // don't have a native port listener yet so the existing
@@ -781,32 +856,47 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       let needsListenerAttachment = true
 
       const computeNodeSignature = (nodes: typeof graphNodesRef.current, selected: Set<string>, dimmed: Set<string>) => {
-        // Hash the bits that affect rendering: id, position, type,
-        // title, plus selection/dim state. We deliberately exclude
-        // summary/roleTags/owner/etc. from the signature — those are
-        // shown in the properties panel and not visually distinct in
-        // the node chrome — so editing them doesn't force a full
-        // child rebuild.
+        // Hash every field that affects node chrome. As the renderer
+        // grows richer (owner chips, decision outcomes, stage goal /
+        // entry / exit summaries, review chips, etc.) we must include
+        // those fields here so edits redraw immediately instead of
+        // waiting for some unrelated state change.
         return JSON.stringify({
           ids: nodes.map((n) => n.id),
           positions: nodes.map((n) => `${n.id}:${n.x},${n.y}`),
           titles: nodes.map((n) => `${n.id}:${n.title}`),
+          summaries: nodes.map((n) => `${n.id}:${n.summary ?? ''}`),
+          roleTags: nodes.map((n) => `${n.id}:${n.roleTags.join(',')}`),
           types: nodes.map((n) => `${n.id}:${n.type}`),
+          owners: nodes.map((n) => `${n.id}:${'owner' in n ? n.owner ?? '' : ''}`),
+          decisionOutcomes: nodes.map((n) => {
+            if ('decisionOutcomes' in n && Array.isArray(n.decisionOutcomes)) {
+              return `${n.id}:${n.decisionOutcomes.join('|')}`
+            }
+            return `${n.id}:`
+          }),
+          goals: nodes.map((n) => `${n.id}:${'goal' in n ? n.goal ?? '' : ''}`),
+          entryConditions: nodes.map((n) => `${n.id}:${'entryCondition' in n ? n.entryCondition ?? '' : ''}`),
+          exitConditions: nodes.map((n) => `${n.id}:${'exitCondition' in n ? n.exitCondition ?? '' : ''}`),
+          reviewStatus: nodes.map((n) => `${n.id}:${'reviewStatus' in n ? n.reviewStatus ?? '' : ''}`),
           selected: Array.from(selected),
           dimmed: Array.from(dimmed),
         })
       }
       const computeEdgeSignature = (edges: typeof graphEdgesRef.current, selected: Set<string>, dimmed: Set<string>) => {
-        // Hash the bits the edge renderer reads: ids, labels, AND
-        // the endpoint node positions. Without positions in the
-        // signature, moving a node wouldn't trigger an edge
-        // re-render — the old Bezier curve would stay anchored
-        // to the stale coordinates while the nodes dragged away.
-        // Also fold the source/target port id so re-pointing a
-        // connector to a different port rebuilds the curve.
+        // Hash the bits the edge renderer reads: ids, labels, rendered
+        // handoff metadata, AND the endpoint node positions. Without
+        // positions in the signature, moving a node wouldn't trigger an
+        // edge re-render — the old Bezier curve would stay anchored to
+        // the stale coordinates while the nodes dragged away. Also fold
+        // the source/target port id so re-pointing a connector to a
+        // different port rebuilds the curve. Include fromRole / toRole /
+        // artifact because the selected-edge metadata line now renders
+        // them and would otherwise go stale until some unrelated redraw.
         return JSON.stringify({
           ids: edges.map((e) => e.id),
           labels: edges.map((e) => `${e.id}:${e.label}`),
+          metadata: edges.map((e) => `${e.id}:${e.fromRole ?? ''}:${e.toRole ?? ''}:${e.artifact ?? ''}`),
           endpoints: edges.map((e) => {
             const s = nodesByIdRef.current.get(e.sourceNodeId)
             const t = nodesByIdRef.current.get(e.targetNodeId)
@@ -1374,6 +1464,46 @@ function findNodeAtPosition(
       worldY <= node.y + node.height
     ) {
       return node
+    }
+  }
+  return null
+}
+
+/**
+ * Find the port under a given canvas-relative screen position.
+ * Each node's ports live at fixed offsets from its top-left corner
+ * (see `getPortPosition` in drawEdges). The port hit radius is
+ * 14px in canvas coords — the same radius drawPorts uses for the
+ * invisible click target. Returns null if no port is under the
+ * cursor.
+ *
+ * We take the document.nodes Map (which has the full GraphNode
+ * including ports and width/height) rather than the GraphNode
+ * projection from `toGraphNode`, because the GraphDocument is
+ * what's actually rendered. Passing the document Map directly
+ * avoids re-projecting on every pointerdown.
+ */
+function findPortAtPosition(
+  screenX: number,
+  screenY: number,
+  documentNodes: Map<string, { id: string; x: number; y: number; width: number; height: number; ports: { id: string; side: string }[] }>,
+  viewport: { x: number; y: number; zoom: number },
+): { nodeId: string; portId: string } | null {
+  const worldX = (screenX - viewport.x) / viewport.zoom
+  const worldY = (screenY - viewport.y) / viewport.zoom
+  const HIT_RADIUS = 14
+  // Iterate in reverse so the topmost node wins on overlap.
+  const entries = Array.from(documentNodes.entries())
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const [id, node] = entries[i]
+    if (!node.ports) continue
+    for (const port of node.ports) {
+      const { x, y } = getPortPosition(node, port.id)
+      const dx = worldX - x
+      const dy = worldY - y
+      if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) {
+        return { nodeId: id, portId: port.id }
+      }
     }
   }
   return null

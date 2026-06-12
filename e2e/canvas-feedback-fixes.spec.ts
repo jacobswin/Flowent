@@ -94,7 +94,7 @@ test('fix-1: edge re-renders when a connected node moves', async ({ page }) => {
   expect(afterEndX, 'edge endpoint should follow the moved node').toBeGreaterThan(beforeEndX)
 })
 
-test('fix-2: two activities can be connected via the test API', async ({ page }) => {
+test('fix-2: two activities can be connected via the test API and via clicking two ports', async ({ page }) => {
   // Add two activities. quickCreate only auto-edges the first one
   // to the start, so the second activity starts disconnected.
   await page.locator('button[aria-label^="Activity:"]').first().click()
@@ -114,16 +114,40 @@ test('fix-2: two activities can be connected via the test API', async ({ page })
   const beforeCount = Number(beforeMatch?.[1] ?? '0')
   console.log('[before edges]', beforeCount)
 
+  // Path 1: the test API. Used by tests that want to skip the
+  // UI and exercise the connect logic deterministically.
   const edgeId = await page.evaluate(async ([s, t]) => {
     return await (window as unknown as { __flowentTestAddEdge?: (s: string, t: string) => Promise<string | null> }).__flowentTestAddEdge?.(s, t) ?? null
   }, [ids[0], ids[1]])
-  expect(edgeId, 'edge should be created').toBeTruthy()
+  expect(edgeId, 'edge should be created via test API').toBeTruthy()
 
   await page.waitForTimeout(500)
   const statusAfter = await page.locator(statusBar).textContent()
   const afterMatch = statusAfter?.match(/(\d+) edges/)
   const afterCount = Number(afterMatch?.[1] ?? '0')
   expect(afterCount, 'edge count should grow by 1').toBe(beforeCount + 1)
+
+  // Path 2: clicking two port hit-areas. This is the new
+  // click-to-connect gesture (no Connect-mode toggle required).
+  // We click the out port of activity 1 and the in port of
+  // activity 2, which is a left→right handoff — the canonical
+  // process-map edge.
+  const positions = await page.evaluate(() => {
+    return (window as unknown as { __flowentGetNodePositions?: () => Record<string, { x: number; y: number }> }).__flowentGetNodePositions?.() ?? {}
+  })
+  const activityIds = Object.keys(positions).filter((k) => k.startsWith('activity-'))
+  const a1 = positions[activityIds[0]]
+  const a2 = positions[activityIds[1]]
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no canvas')
+
+  const beforeClick2 = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
+  await page.mouse.click(box.x + a1.x + 220, box.y + a1.y + 48)
+  await page.waitForTimeout(300)
+  await page.mouse.click(box.x + a2.x, box.y + a2.y + 48)
+  await page.waitForTimeout(500)
+  const afterClick2 = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
+  expect(afterClick2, 'click-to-connect should add 1 more edge').toBe(beforeClick2 + 1)
 })
 
 test('fix-3: activity ports are subtle by default, fade in on hover', async ({ page }) => {

@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 import { sampleBezierMidpoint } from '../routing/edgeLabelAnchor'
+import { getSelectedEdgeMetadataLines, truncateMetadataLine } from './drawEdgeMetadata'
 
 export interface DrawEdgesOptions {
   preview?: boolean
@@ -73,13 +74,9 @@ export function getDisplayEdgeLabel(label?: string): string {
 }
 
 export function getSelectedEdgeMetadataText(edge: Pick<GraphEdge, 'fromRole' | 'toRole' | 'artifact'>): string {
-  const roleText = edge.fromRole && edge.toRole
-    ? `${edge.fromRole} → ${edge.toRole}`
-    : edge.fromRole ?? edge.toRole ?? ''
-  const artifactText = edge.artifact?.trim() ?? ''
-
-  if (roleText && artifactText) return `${roleText} · ${artifactText}`
-  return roleText || artifactText || ''
+  // Back-compat helper kept for tests and any older callers that
+  // still expect a single-line metadata summary.
+  return getSelectedEdgeMetadataLines(edge).join(' · ')
 }
 
 function drawRoute(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
@@ -215,24 +212,24 @@ export function drawEdges(
       layer.addChild(label)
 
       if (selected) {
-        const metadata = getSelectedEdgeMetadataText(edge)
-        if (metadata) {
+        const metadataLines = getSelectedEdgeMetadataLines(edge)
+        metadataLines.forEach((line, index) => {
           const meta = new Text({
-            text: metadata,
+            text: truncateMetadataLine(line, 32),
             style: {
               fontFamily:
                 '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
-              fontSize: 10,
-              fontWeight: '500',
-              fill: 0x64748b,
+              fontSize: index === 0 ? 10 : 9,
+              fontWeight: index === 0 ? '600' : '500',
+              fill: index === 0 ? 0x475569 : 0x64748b,
             },
           })
           meta.x = labelCenter.x - meta.width / 2
-          meta.y = labelCenter.y + labelHeight / 2 + 4
+          meta.y = labelCenter.y + labelHeight / 2 + 4 + index * 14
           meta.alpha = dimmed ? 0.22 : 1
           meta.eventMode = 'none'
           layer.addChild(meta)
-        }
+        })
       }
 
       // A clickable hit pad sitting on top of the label so the label itself

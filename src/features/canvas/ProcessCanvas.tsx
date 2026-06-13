@@ -197,6 +197,8 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           fromRole: e.data?.fromRole ?? '',
           toRole: e.data?.toRole ?? '',
           artifact: e.data?.artifact ?? '',
+          readinessSignal: e.data?.readinessSignal ?? '',
+          expectation: e.data?.expectation ?? '',
         })),
     [canvas.edges],
   )
@@ -896,7 +898,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         return JSON.stringify({
           ids: edges.map((e) => e.id),
           labels: edges.map((e) => `${e.id}:${e.label}`),
-          metadata: edges.map((e) => `${e.id}:${e.fromRole ?? ''}:${e.toRole ?? ''}:${e.artifact ?? ''}`),
+          metadata: edges.map((e) => `${e.id}:${e.fromRole ?? ''}:${e.toRole ?? ''}:${e.artifact ?? ''}:${e.readinessSignal ?? ''}:${e.expectation ?? ''}`),
           endpoints: edges.map((e) => {
             const s = nodesByIdRef.current.get(e.sourceNodeId)
             const t = nodesByIdRef.current.get(e.targetNodeId)

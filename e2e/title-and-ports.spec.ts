@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 const pixiCanvas = '.pixi-host canvas'
+const statusBar = '.status-bar'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -51,6 +52,30 @@ test('activity title edit: focus + type + commit on Enter', async ({ page }) => 
       Object.values(m.document?.nodes ?? {}).map((n) => n.title ?? ''),
     )
   }, { timeout: 5000 }).toContain('Customer onboarding')
+})
+
+test('typing in a block editor does not trigger canvas shortcuts', async ({ page }) => {
+  await page.waitForSelector(pixiCanvas, { timeout: 30000 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press('0')
+
+  await page.getByRole('button', { name: 'Activity' }).first().click()
+  await page.waitForTimeout(300)
+  await expect(page.locator(statusBar)).toContainText('2 nodes')
+
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.dblclick(box.x + 410, box.y + 268)
+  await page.waitForTimeout(300)
+
+  const titleInput = page.getByLabel('Title')
+  await expect(titleInput).toBeFocused()
+  await page.keyboard.press('Delete')
+  await page.keyboard.press('a')
+  await page.waitForTimeout(150)
+
+  await expect(page.locator(statusBar)).toContainText('2 nodes')
+  await expect(titleInput).toHaveValue(/a$/)
 })
 
 test('decision node only has left+right ports after migration', async ({ page }) => {

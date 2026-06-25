@@ -9,10 +9,11 @@ interface LibraryProps {
   library: ReturnType<typeof useLibrary>
   activeMapId: string | null
   onSelectMap: (mapId: string) => void
+  collapsed: boolean
+  onCollapsedChange: (collapsed: boolean) => void
 }
 
-export function Library({ library, activeMapId, onSelectMap }: LibraryProps) {
-  const [collapsed, setCollapsed] = useState(false)
+export function Library({ library, activeMapId, onSelectMap, collapsed, onCollapsedChange }: LibraryProps) {
   const [creating, setCreating] = useState<'map' | 'folder' | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -34,7 +35,7 @@ export function Library({ library, activeMapId, onSelectMap }: LibraryProps) {
       <button
         type="button"
         className="library-rail"
-        onClick={() => setCollapsed(false)}
+        onClick={() => onCollapsedChange(false)}
         aria-label="Expand library"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -51,7 +52,7 @@ export function Library({ library, activeMapId, onSelectMap }: LibraryProps) {
         <button
           type="button"
           className="library-collapse"
-          onClick={() => setCollapsed(true)}
+          onClick={() => onCollapsedChange(true)}
           aria-label="Collapse library"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">

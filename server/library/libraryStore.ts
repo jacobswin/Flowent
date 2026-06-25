@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
+import { commentSchema } from './commentStore'
 
 // === Schemas ===
 
@@ -85,6 +86,7 @@ export const mapSchema = z.object({
 export const librarySchema = z.object({
   folders: z.array(folderSchema),
   maps: z.array(mapSchema),
+  comments: z.record(z.string(), z.array(commentSchema)).default({}),
 })
 
 export type SavedFolder = z.infer<typeof folderSchema>
@@ -94,7 +96,7 @@ export type SavedLibrary = z.infer<typeof librarySchema>
 // === CRUD ===
 
 export function createEmptyLibrary(): SavedLibrary {
-  return { folders: [], maps: [] }
+  return { folders: [], maps: [], comments: {} }
 }
 
 export function addFolder(lib: SavedLibrary, folder: Omit<SavedFolder, never>): SavedLibrary {

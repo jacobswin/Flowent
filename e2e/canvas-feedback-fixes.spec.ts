@@ -150,6 +150,36 @@ test('fix-2: two activities can be connected via the test API and via clicking t
   expect(afterClick2, 'click-to-connect should add 1 more edge').toBe(beforeClick2 + 1)
 })
 
+test('connect mode connects two node bodies without precise port targeting', async ({ page }) => {
+  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await page.waitForTimeout(800)
+  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await page.waitForTimeout(800)
+
+  const positions = await page.evaluate(() => {
+    return (window as unknown as { __flowentGetNodePositions?: () => Record<string, { x: number; y: number }> }).__flowentGetNodePositions?.() ?? {}
+  })
+  const activityIds = Object.keys(positions).filter((k) => k.startsWith('activity-'))
+  expect(activityIds.length, 'two activities should exist').toBe(2)
+
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no canvas')
+
+  const before = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await page.waitForTimeout(100)
+
+  const source = positions[activityIds[0]]
+  const target = positions[activityIds[1]]
+  await page.mouse.click(box.x + source.x + 60, box.y + source.y + 60)
+  await page.waitForTimeout(200)
+  await page.mouse.click(box.x + target.x + 60, box.y + target.y + 60)
+  await page.waitForTimeout(500)
+
+  const after = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
+  expect(after, 'node-body connect mode should add an edge').toBe(before + 1)
+})
+
 test('fix-3: activity ports are subtle by default, fade in on hover', async ({ page }) => {
   // Add an activity so we have something to inspect.
   await page.locator('button[aria-label^="Activity:"]').first().click()

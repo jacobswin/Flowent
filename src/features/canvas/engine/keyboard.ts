@@ -14,7 +14,6 @@ export type CanvasAction =
   | 'auto-layout'
   | 'undo'
   | 'redo'
-  | 'delete'
   | 'zoom-in'
   | 'zoom-out'
   | 'zoom-reset'
@@ -58,10 +57,6 @@ export function mapKeyToAction(event: KeyEventLike): CanvasAction {
 
   if (!hasMeta && key === 'l') {
     return 'auto-layout'
-  }
-
-  if (!hasMeta && (key === 'delete' || key === 'backspace')) {
-    return 'delete'
   }
 
   if (!hasMeta && (key === '+' || key === '=')) {

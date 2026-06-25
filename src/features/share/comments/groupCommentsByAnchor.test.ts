@@ -6,12 +6,12 @@ function makeComment(partial: Partial<Comment> & Pick<Comment, 'anchor'>): Comme
   return {
     id: partial.id ?? 'c1',
     mapId: 'map-1',
-    anchor: partial.anchor,
     author: { name: 'Alex', role: 'PM' },
     body: 'body',
     status: partial.status ?? 'open',
     createdAt: '2026-06-15T00:00:00.000Z',
     ...partial,
+    anchor: partial.anchor,
   }
 }
 

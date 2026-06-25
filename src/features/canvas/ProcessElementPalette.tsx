@@ -1,4 +1,5 @@
 import { PROCESS_ELEMENTS, type ProcessElementType } from './processElements'
+import { FloatingPanel } from './FloatingPanel'
 
 interface ProcessElementPaletteProps {
   onQuickCreate: (type: ProcessElementType) => void
@@ -8,11 +9,15 @@ const DRAG_MIME_TYPE = 'application/x-flowent-process-element'
 
 export function ProcessElementPalette({ onQuickCreate }: ProcessElementPaletteProps) {
   return (
-    <section className="process-element-palette" aria-label="Process element library">
-      <div className="process-element-palette-header">
-        <span className="process-element-palette-title">Elements</span>
-        <span className="process-element-palette-hint">Click to quick-create · drag to place</span>
-      </div>
+    <FloatingPanel
+      className="process-element-palette"
+      ariaLabel="Process element library"
+      storageKey="flowent:floating-panel:process-elements"
+      title="Elements"
+      subtitle="Click to quick-create · drag to place"
+      width={260}
+      defaultPlacement={{ top: 96, right: 18 }}
+    >
       <div className="process-element-list">
         {PROCESS_ELEMENTS.map((element) => (
           <button
@@ -39,7 +44,7 @@ export function ProcessElementPalette({ onQuickCreate }: ProcessElementPalettePr
           </button>
         ))}
       </div>
-    </section>
+    </FloatingPanel>
   )
 }
 

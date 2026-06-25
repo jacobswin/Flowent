@@ -31,7 +31,7 @@ export function Toolbar({
         type="button"
         className={`toolbar-button ${connectorMode ? 'active' : ''}`}
         onClick={onToggleConnector}
-        title="Connector mode (C)"
+        title="Connect: click two nodes or ports (C)"
       >
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
           <circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />

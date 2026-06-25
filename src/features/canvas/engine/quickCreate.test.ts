@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyDocument, addNode } from './graphDocument'
 import { createGraphNode } from '../processElements'
-import { planQuickCreate } from './quickCreate'
+import { getPortPosition } from '../render/drawEdges'
+import { planConnectedNodeFromPort, planQuickCreate } from './quickCreate'
 
 describe('planQuickCreate', () => {
   it('places a new node to the right of the selected source and creates a handoff edge', () => {
@@ -57,5 +58,31 @@ describe('planQuickCreate', () => {
 
     expect(plan.node.type).toBe('bottleneck')
     expect(plan.edge).toBeNull()
+  })
+
+  it('creates a connected node with its input port aligned to the drop point', () => {
+    const source = createGraphNode('activity', 'activity-1', { x: 100, y: 200 })
+    const doc = addNode(createEmptyDocument('doc'), source)
+    const dropPoint = { x: 640, y: 260 }
+
+    const plan = planConnectedNodeFromPort(doc, {
+      sourceNodeId: 'activity-1',
+      sourcePortId: 'out',
+      targetType: 'decision',
+      newNodeId: 'decision-1',
+      newEdgeId: 'edge-1',
+      dropPosition: dropPoint,
+    })
+
+    expect(plan.node.type).toBe('decision')
+    expect(getPortPosition(plan.node, 'in')).toEqual(dropPoint)
+    expect(plan.edge).toMatchObject({
+      id: 'edge-1',
+      sourceNodeId: 'activity-1',
+      sourcePortId: 'out',
+      targetNodeId: 'decision-1',
+      targetPortId: 'in',
+      kind: 'handoff',
+    })
   })
 })

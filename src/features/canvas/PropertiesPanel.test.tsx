@@ -12,6 +12,24 @@ function makeActivity(): ProcessNode {
   }
 }
 
+function makeActivityWithId(id: string, title: string): ProcessNode {
+  return {
+    id,
+    type: 'activity',
+    position: { x: 100, y: 100 },
+    data: { title, summary: '', roleIds: [], kind: 'activity' },
+  }
+}
+
+function makeStart(): ProcessNode {
+  return {
+    id: 'start',
+    type: 'startEnd',
+    position: { x: 100, y: 100 },
+    data: { label: 'Start', kind: 'start' },
+  }
+}
+
 function makeStage(): ProcessNode {
   return {
     id: 'stage-1',
@@ -109,6 +127,89 @@ describe('PropertiesPanel — semantic editors', () => {
     expect(onUpdateEdge).toHaveBeenCalledWith('edge-1', {
       expectation: 'Ready work includes context and acceptance expectations.',
     })
+  })
+
+  it('edits handoff color from the edge panel', () => {
+    const onUpdateEdge = vi.fn()
+    render(
+      <PropertiesPanel
+        node={null}
+        edge={{
+          id: 'edge-1',
+          type: 'handoff',
+          source: 'a',
+          target: 'b',
+          data: { label: '', color: '#111827' },
+        }}
+        onUpdateNode={() => {}}
+        onUpdateEdge={onUpdateEdge}
+        onClose={() => {}}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /set connection color red/i }))
+
+    expect(onUpdateEdge).toHaveBeenCalledWith('edge-1', { color: '#dc2626' })
+  })
+
+  it('reroutes a handoff target from the edge panel', () => {
+    const onUpdateEdge = vi.fn()
+    render(
+      <PropertiesPanel
+        node={null}
+        edge={{
+          id: 'edge-1',
+          type: 'handoff',
+          source: 'start',
+          target: 'a1',
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: { label: '' },
+        }}
+        nodes={[
+          makeStart(),
+          makeActivityWithId('a1', 'Wrong activity'),
+          makeActivityWithId('a2', 'Correct activity'),
+        ]}
+        onUpdateNode={() => {}}
+        onUpdateEdge={onUpdateEdge}
+        onClose={() => {}}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('To node'), { target: { value: 'a2' } })
+
+    expect(onUpdateEdge).toHaveBeenCalledWith('edge-1', {
+      targetNodeId: 'a2',
+      targetPortId: 'in',
+    })
+  })
+
+  it('deletes a selected handoff from the edge panel', () => {
+    const onDeleteEdge = vi.fn()
+    render(
+      <PropertiesPanel
+        node={null}
+        edge={{
+          id: 'edge-1',
+          type: 'handoff',
+          source: 'start',
+          target: 'a1',
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: { label: '' },
+        }}
+        nodes={[makeStart(), makeActivityWithId('a1', 'Activity')]}
+        onUpdateNode={() => {}}
+        onUpdateEdge={() => {}}
+        onDeleteEdge={onDeleteEdge}
+        onClose={() => {}}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete connector' }))
+
+    expect(onDeleteEdge).toHaveBeenCalledTimes(1)
   })
 
   it('submits all three activity fields on form submit so the panel does not silently drop expectations', () => {

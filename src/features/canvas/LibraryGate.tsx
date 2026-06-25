@@ -83,6 +83,7 @@ function ensureStartNode(doc: GraphDocument): GraphDocument {
 export function LibraryGate() {
   const library = useLibrary()
   const [activeMapId, setActiveMapId] = useState<string | null>(readInitialMapId())
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false)
 
   // Pick a default map the first time we see the library. Sticky across
   // reloads: the URL/localStorage hint wins; otherwise fall back to the
@@ -130,11 +131,13 @@ export function LibraryGate() {
   }
 
   return (
-    <div className="library-gate">
+    <div className={`library-gate${libraryCollapsed ? ' library-gate-collapsed' : ''}`}>
       <Library
         library={library}
         activeMapId={activeMapId}
         onSelectMap={(id) => setActiveMapId(id)}
+        collapsed={libraryCollapsed}
+        onCollapsedChange={setLibraryCollapsed}
       />
       <CanvasHost
         key={activeMapId}

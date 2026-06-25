@@ -10,7 +10,7 @@ import type {
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
-import { planQuickCreate } from './engine/quickCreate'
+import { planConnectedNodeFromPort, planQuickCreate } from './engine/quickCreate'
 import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
@@ -18,6 +18,7 @@ import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focu
 import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
 import { getBottleneckMetrics } from './diagnostics/bottleneckMetrics'
 import { buildActivationSnapshot, deriveActivationStatus, isActivationEligible, type ActivationState } from './activation/processActivation'
+import { DEFAULT_EDGE_COLOR } from './edgeColors'
 
 function toProcessNode(node: GraphNode): ProcessNode {
   if (node.type === 'activity') {
@@ -103,6 +104,7 @@ function toProcessEdge(edge: GraphEdge): ProcessEdge {
     targetHandle: edge.targetPortId,
     data: {
       label: edge.label,
+      color: edge.color ?? DEFAULT_EDGE_COLOR,
       fromRole: edge.fromRole ?? '',
       toRole: edge.toRole ?? '',
       artifact: edge.artifact ?? '',
@@ -326,6 +328,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         type: 'SelectNode',
         payload: { id: nodeId, additive },
       })
+      setEditorEdgeId(null)
     },
     [applyCommand],
   )
@@ -356,7 +359,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         setEditorNodeId(null)
         return
       }
-      setEditorEdgeId(edgeId)
+      setEditorEdgeId(null)
       setEditorNodeId(null)
     },
     [applyCommand, history.present.selectedEdgeIds],
@@ -369,6 +372,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const startConnection = useCallback((nodeId: string, portId: string) => {
     setConnectionStart({ nodeId, portId })
+  }, [])
+
+  const cancelConnection = useCallback(() => {
+    setConnectionStart(null)
   }, [])
 
   const endConnection = useCallback((targetNodeId: string, targetPortId = 'in') => {
@@ -393,6 +400,11 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const openEditor = useCallback((nodeId: string) => {
     setEditorNodeId(nodeId)
     setEditorEdgeId(null)
+  }, [])
+
+  const openEdgeEditor = useCallback((edgeId: string) => {
+    setEditorEdgeId(edgeId)
+    setEditorNodeId(null)
   }, [])
 
   const closeEditor = useCallback(() => {
@@ -455,6 +467,34 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       next = runCommand(next, { type: 'SelectNode', payload: { id: plan.node.id, additive: false } })
       return pushHistory(current, next)
     })
+  }, [])
+
+  const createConnectedNodeFromPort = useCallback((
+    sourceNodeId: string,
+    sourcePortId: string,
+    targetType: ProcessElementType,
+    dropPosition: { x: number; y: number },
+  ) => {
+    setHistory((current) => {
+      const newNodeId = `${targetType}-${Date.now()}`
+      const newEdgeId = `edge-${Date.now()}`
+      const plan = planConnectedNodeFromPort(current.present, {
+        sourceNodeId,
+        sourcePortId,
+        targetType,
+        newNodeId,
+        newEdgeId,
+        dropPosition,
+      })
+
+      let next = runCommand(current.present, { type: 'AddNode', payload: plan.node })
+      if (plan.edge) {
+        next = runCommand(next, { type: 'AddEdge', payload: plan.edge })
+      }
+      next = runCommand(next, { type: 'SelectNode', payload: { id: plan.node.id, additive: false } })
+      return pushHistory(current, next)
+    })
+    setConnectionStart(null)
   }, [])
 
   const removeSelected = useCallback(() => {
@@ -534,7 +574,12 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   )
 
   type EdgeDataPatch = {
+    sourceNodeId?: string
+    sourcePortId?: string
+    targetNodeId?: string
+    targetPortId?: string
     label?: string
+    color?: string
     fromRole?: string
     toRole?: string
     artifact?: string
@@ -550,7 +595,12 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         payload: {
           id: edgeId,
           patch: {
+            ...(typeof data.sourceNodeId === 'string' ? { sourceNodeId: data.sourceNodeId } : {}),
+            ...(typeof data.sourcePortId === 'string' ? { sourcePortId: data.sourcePortId } : {}),
+            ...(typeof data.targetNodeId === 'string' ? { targetNodeId: data.targetNodeId } : {}),
+            ...(typeof data.targetPortId === 'string' ? { targetPortId: data.targetPortId } : {}),
             ...(typeof data.label === 'string' ? { label: data.label } : {}),
+            ...(typeof data.color === 'string' ? { color: data.color } : {}),
             ...(typeof data.fromRole === 'string' ? { fromRole: data.fromRole } : {}),
             ...(typeof data.toRole === 'string' ? { toRole: data.toRole } : {}),
             ...(typeof data.artifact === 'string' ? { artifact: data.artifact } : {}),
@@ -788,6 +838,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     selectNodesInRect,
     toggleConnectorMode,
     startConnection,
+    cancelConnection,
     endConnection,
     onNodesChange,
     onEdgesChange,
@@ -796,6 +847,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     onEdgeClick,
     onPaneClick,
     openEditor,
+    openEdgeEditor,
     closeEditor,
     addActivity,
     addDecision,
@@ -804,6 +856,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     addStage,
     addBottleneck,
     quickCreate,
+    createConnectedNodeFromPort,
     focus,
     setFocus,
     focusView,

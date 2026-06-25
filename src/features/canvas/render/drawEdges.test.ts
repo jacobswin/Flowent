@@ -29,7 +29,8 @@ vi.mock('pixi.js', async () => {
 })
 
 import { Container } from 'pixi.js'
-import { drawEdges, getDisplayEdgeLabel, getSelectedEdgeMetadataText } from './drawEdges'
+import type { FederatedPointerEvent } from 'pixi.js'
+import { drawEdges, getDisplayEdgeLabel, getEdgeStrokeColor, getSelectedEdgeMetadataText } from './drawEdges'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
 function makeNode(id: string, x: number, y: number): GraphNode {
@@ -96,13 +97,33 @@ describe('drawEdges labelHitLayer', () => {
     expect(mainLabelHits).toHaveLength(0)
     expect(overlayLabelHits).toHaveLength(1)
   })
+
+  it('routes the edge hit area to the supplied edgeHitLayer instead of the main layer', () => {
+    const edgeLayer = new Container()
+    const edgeHitLayer = new Container()
+    const nodesById = new Map<string, GraphNode>([
+      ['a', makeNode('a', 0, 0)],
+      ['b', makeNode('b', 200, 0)],
+    ])
+    const edges: GraphEdge[] = [makeEdge('e1', '', 'a', 'b')]
+
+    drawEdges(edgeLayer, edges, nodesById, { edgeHitLayer })
+
+    expect(edgeLayer.children.some((c) => c.label === 'edge-hit:e1')).toBe(false)
+    expect(edgeHitLayer.children.some((c) => c.label === 'edge-hit:e1')).toBe(true)
+  })
 })
 
 describe('drawEdges visual helpers', () => {
-  it('uses a product-specific placeholder label when the edge has no label', () => {
-    expect(getDisplayEdgeLabel('')).toBe('Add handoff label')
-    expect(getDisplayEdgeLabel(undefined)).toBe('Add handoff label')
+  it('hides the label when the edge has no label', () => {
+    expect(getDisplayEdgeLabel('')).toBeNull()
+    expect(getDisplayEdgeLabel(undefined)).toBeNull()
     expect(getDisplayEdgeLabel('PM handoff')).toBe('PM handoff')
+  })
+
+  it('uses a dark default stroke and supports custom edge colors', () => {
+    expect(getEdgeStrokeColor(makeEdge('e1', '', 'a', 'b'))).toBe(0x111827)
+    expect(getEdgeStrokeColor({ ...makeEdge('e1', '', 'a', 'b'), color: '#dc2626' })).toBe(0xdc2626)
   })
 
   it('formats selected-edge metadata compactly from roles and artifact', () => {
@@ -116,5 +137,70 @@ describe('drawEdges visual helpers', () => {
 
     expect(getSelectedEdgeMetadataText({ artifact: 'Ready brief' })).toBe('Ready brief')
     expect(getSelectedEdgeMetadataText({})).toBe('')
+  })
+})
+
+describe('drawEdges pointer interactions', () => {
+  it('does not open the label editor on edge double-click', () => {
+    const edgeLayer = new Container()
+    const nodesById = new Map<string, GraphNode>([
+      ['a', makeNode('a', 0, 0)],
+      ['b', makeNode('b', 200, 0)],
+    ])
+    const edges: GraphEdge[] = [makeEdge('e1', '', 'a', 'b')]
+    const onOpenLabelEditor = vi.fn()
+
+    drawEdges(edgeLayer, edges, nodesById, {
+      onEdgeClick: vi.fn(),
+      onOpenLabelEditor,
+    })
+
+    const hit = edgeLayer.children.find((child) => child.label === 'edge-hit:e1')
+    const event = {
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      stopPropagation: vi.fn(),
+      getLocalPosition: () => ({ x: 148, y: 32 }),
+    } as unknown as FederatedPointerEvent
+
+    hit?.emit('pointertap', event)
+    hit?.emit('pointertap', event)
+
+    expect(onOpenLabelEditor).not.toHaveBeenCalled()
+  })
+
+  it('keeps edge double-click as selection-only across a redraw after the first click', () => {
+    const edgeLayer = new Container()
+    const nodesById = new Map<string, GraphNode>([
+      ['a', makeNode('a', 0, 0)],
+      ['b', makeNode('b', 200, 0)],
+    ])
+    const edges: GraphEdge[] = [makeEdge('e1', '', 'a', 'b')]
+    const onEdgeClick = vi.fn()
+    const onOpenLabelEditor = vi.fn()
+    const event = {
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      stopPropagation: vi.fn(),
+      getLocalPosition: () => ({ x: 148, y: 32 }),
+    } as unknown as FederatedPointerEvent
+
+    drawEdges(edgeLayer, edges, nodesById, {
+      onEdgeClick,
+      onOpenLabelEditor,
+    })
+    edgeLayer.children.find((child) => child.label === 'edge-hit:e1')?.emit('pointertap', event)
+
+    drawEdges(edgeLayer, edges, nodesById, {
+      selectedEdgeIds: new Set(['e1']),
+      onEdgeClick,
+      onOpenLabelEditor,
+    })
+    edgeLayer.children.find((child) => child.label === 'edge-hit:e1')?.emit('pointertap', event)
+
+    expect(onOpenLabelEditor).not.toHaveBeenCalled()
+    expect(onEdgeClick).toHaveBeenCalledTimes(2)
   })
 })

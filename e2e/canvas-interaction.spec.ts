@@ -103,6 +103,123 @@ test('mouse wheel zooms the canvas', async ({ page }) => {
   expect(pct).toBeGreaterThan(100)
 })
 
+test('dragging empty whiteboard pans the viewport with the mouse', async ({ page }) => {
+  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(150)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no pixi canvas')
+
+  const before = await page.evaluate(() => {
+    return (window as unknown as { __flowentGetViewport?: () => { x: number; y: number; zoom: number } | null }).__flowentGetViewport?.() ?? null
+  })
+  expect(before).toBeTruthy()
+
+  const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(start.x + 140, start.y + 70, { steps: 6 })
+  await page.mouse.up()
+  await page.waitForTimeout(120)
+
+  const after = await page.evaluate(() => {
+    return (window as unknown as { __flowentGetViewport?: () => { x: number; y: number; zoom: number } | null }).__flowentGetViewport?.() ?? null
+  })
+  expect(after).toBeTruthy()
+  expect(after!.x).toBeGreaterThan(before!.x + 100)
+  expect(after!.y).toBeGreaterThan(before!.y + 40)
+})
+
+test('a mistaken connector can be rerouted from the edge properties panel', async ({ page }) => {
+  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(150)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  await page.locator('button[aria-label^="Activity:"]').click()
+  await page.waitForTimeout(250)
+  await page.locator('button[aria-label^="Activity:"]').click()
+  await page.waitForTimeout(250)
+
+  const activityIds = await page.evaluate(() => {
+    const positions = (window as unknown as { __flowentGetNodePositions?: () => Record<string, unknown> }).__flowentGetNodePositions?.() ?? {}
+    return Object.keys(positions).filter((id) => id.startsWith('activity-'))
+  })
+  expect(activityIds.length).toBeGreaterThanOrEqual(2)
+
+  const [wrongTargetId, correctTargetId] = activityIds
+  const edgeId = await page.evaluate(async (targetId) => {
+    return await (window as unknown as { __flowentTestAddEdge?: (sourceId: string, targetId: string) => Promise<string | null> }).__flowentTestAddEdge?.('start', targetId) ?? null
+  }, wrongTargetId)
+  expect(edgeId).toBeTruthy()
+
+  await page.locator(`[data-edge-id="${edgeId}"]`).evaluate((element) => {
+    ;(element as HTMLButtonElement).click()
+  })
+  await expect(page.getByRole('complementary', { name: 'Properties' })).toBeVisible()
+
+  await page.getByLabel('To node').selectOption(correctTargetId)
+  await page.waitForTimeout(150)
+
+  const endpoints = await page.evaluate((id) => {
+    return (window as unknown as {
+      __flowentGetEdgeEndpoints?: (edgeId: string) => {
+        sourceNodeId: string
+        sourcePortId: string
+        targetNodeId: string
+        targetPortId: string
+      } | null
+    }).__flowentGetEdgeEndpoints?.(id as string) ?? null
+  }, edgeId)
+
+  expect(endpoints).toMatchObject({
+    sourceNodeId: 'start',
+    sourcePortId: 'out',
+    targetNodeId: correctTargetId,
+    targetPortId: 'in',
+  })
+})
+
+test('a selected connector can be deleted from the on-canvas action pill', async ({ page }) => {
+  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(150)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  await page.locator('button[aria-label^="Activity:"]').click()
+  await page.waitForTimeout(250)
+
+  const activityId = await page.evaluate(() => {
+    const positions = (window as unknown as { __flowentGetNodePositions?: () => Record<string, unknown> }).__flowentGetNodePositions?.() ?? {}
+    return Object.keys(positions).find((id) => id.startsWith('activity-')) ?? null
+  })
+  expect(activityId).toBeTruthy()
+
+  const edgeId = await page.evaluate(async (targetId) => {
+    return await (window as unknown as { __flowentTestAddEdge?: (sourceId: string, targetId: string) => Promise<string | null> }).__flowentTestAddEdge?.('start', targetId as string) ?? null
+  }, activityId)
+  expect(edgeId).toBeTruthy()
+
+  await page.locator(`[data-edge-id="${edgeId}"]`).evaluate((element) => {
+    ;(element as HTMLButtonElement).click()
+  })
+  await expect(page.locator('.edge-quick-actions')).toBeVisible()
+
+  await page.locator('.edge-quick-actions').getByRole('button', { name: 'Delete' }).click()
+  await page.waitForTimeout(150)
+
+  const deleted = await page.evaluate((id) => {
+    return (window as unknown as { __flowentGetEdgeEndpoints?: (edgeId: string) => unknown | null }).__flowentGetEdgeEndpoints?.(id as string) ?? null
+  }, edgeId)
+  expect(deleted).toBeNull()
+  await expect(page.locator('.edge-quick-actions')).toHaveCount(0)
+})
+
 test('keyboard zoom-in still works after fixes', async ({ page }) => {
   page.on('pageerror', (err) => console.log('[pageerror]', err.message))
   await page.waitForSelector(pixiCanvas)

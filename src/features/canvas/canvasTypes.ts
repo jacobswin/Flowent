@@ -45,6 +45,7 @@ export type GraphEdge = {
   targetNodeId: string
   targetPortId: string
   label: string
+  color?: string
   kind?: 'handoff'
   fromRole?: string
   toRole?: string
@@ -58,6 +59,13 @@ export type GraphViewport = {
   x: number
   y: number
   zoom: number
+}
+
+export type ConnectionCreateRequest = {
+  sourceNodeId: string
+  sourcePortId: string
+  worldPosition: { x: number; y: number }
+  screenPosition: { x: number; y: number }
 }
 
 export type GraphDocument = {
@@ -110,7 +118,12 @@ export type GraphCommand =
         patch: Partial<
           Pick<
             GraphEdge,
+            | 'sourceNodeId'
+            | 'sourcePortId'
+            | 'targetNodeId'
+            | 'targetPortId'
             | 'label'
+            | 'color'
             | 'fromRole'
             | 'toRole'
             | 'artifact'
@@ -195,6 +208,7 @@ export type ProcessEdge = {
   targetHandle?: string
   data?: {
     label?: string
+    color?: string
     fromRole?: string
     toRole?: string
     artifact?: string

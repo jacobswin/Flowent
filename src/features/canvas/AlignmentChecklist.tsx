@@ -1,4 +1,5 @@
 import type { ProcessMapDiagnostic } from './diagnostics/processMapDiagnostics'
+import { FloatingPanel } from './FloatingPanel'
 
 interface AlignmentChecklistProps {
   diagnostics: ProcessMapDiagnostic[]
@@ -7,11 +8,16 @@ interface AlignmentChecklistProps {
 
 export function AlignmentChecklist({ diagnostics, onSelectDiagnostic }: AlignmentChecklistProps) {
   return (
-    <aside className="alignment-checklist" aria-label="Alignment checklist">
-      <div className="alignment-checklist-header">
-        <span>Alignment checklist</span>
-        <strong>{diagnostics.length}</strong>
-      </div>
+    <FloatingPanel
+      as="aside"
+      className="alignment-checklist"
+      ariaLabel="Alignment checklist"
+      storageKey="flowent:floating-panel:alignment-checklist"
+      title="Alignment checklist"
+      badge={<strong>{diagnostics.length}</strong>}
+      width={260}
+      defaultPlacement={{ top: 454, right: 18 }}
+    >
       {diagnostics.length === 0 ? (
         <p className="alignment-checklist-empty">No alignment gaps found in the current map.</p>
       ) : (
@@ -31,6 +37,6 @@ export function AlignmentChecklist({ diagnostics, onSelectDiagnostic }: Alignmen
           ))}
         </ul>
       )}
-    </aside>
+    </FloatingPanel>
   )
 }

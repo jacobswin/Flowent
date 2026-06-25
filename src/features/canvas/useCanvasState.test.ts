@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { useCanvasState, migrateDecisionPorts } from './useCanvasState'
 import { createEmptyDocument } from './engine/graphDocument'
 import type { GraphDocument, GraphNode } from './canvasTypes'
+import { getPortPosition } from './render/drawEdges'
 
 describe('useCanvasState', () => {
   it('adds activity node from toolbar action', () => {
@@ -117,7 +118,7 @@ describe('useCanvasState', () => {
     expect(edge?.targetHandle).toBe('in')
   })
 
-  it('selects an edge and exposes it in the editor state', () => {
+  it('selects an edge without opening the editor until explicitly requested', () => {
     const { result } = renderHook(() => useCanvasState())
 
     act(() => result.current.addActivity({ x: 100, y: 100 }))
@@ -139,6 +140,13 @@ describe('useCanvasState', () => {
 
     expect(result.current.selectedNodeIds.size).toBe(0)
     expect(result.current.selectedEdgeIds.size).toBe(1)
+    expect(result.current.selectedEdge?.id).toBe(edge.id)
+    expect(result.current.editorEdge).toBeNull()
+
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
+
     expect(result.current.editorEdge?.id).toBe(edge.id)
   })
 
@@ -156,6 +164,9 @@ describe('useCanvasState', () => {
     act(() => {
       result.current.onEdgeClick(edge.id, false)
     })
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
     expect(result.current.editorEdge?.id).toBe(edge.id)
 
     // Shift-click on the already-selected edge to deselect.
@@ -163,6 +174,35 @@ describe('useCanvasState', () => {
       result.current.onEdgeClick(edge.id, true)
     })
 
+    expect(result.current.selectedEdgeIds.size).toBe(0)
+    expect(result.current.editorEdge).toBeNull()
+  })
+
+  it('clears the selected edge and edge editor when selecting a node', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
+    expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    act(() => {
+      result.current.onNodeClick(source.id, false)
+    })
+
+    expect(result.current.selectedNodeIds.has(source.id)).toBe(true)
     expect(result.current.selectedEdgeIds.size).toBe(0)
     expect(result.current.editorEdge).toBeNull()
   })
@@ -178,6 +218,7 @@ describe('useCanvasState', () => {
     act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
     const edge = result.current.edges[0]!
     act(() => result.current.onEdgeClick(edge.id, false))
+    act(() => result.current.openEdgeEditor(edge.id))
     expect(result.current.editorEdge?.id).toBe(edge.id)
 
     act(() => {
@@ -207,6 +248,40 @@ describe('useCanvasState', () => {
     })
 
     expect(result.current.edges[0]?.data?.label).toBe('PM handoff')
+  })
+
+  it('reroutes a selected edge to a different target node', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const activity = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const decision = result.current.nodes.find((n) => n.data.kind === 'decision')!
+
+    act(() => {
+      result.current.onConnect('start', activity.id, 'out', 'in')
+    })
+
+    const edge = result.current.edges[0]
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    act(() => {
+      result.current.updateEdgeData(edge.id, {
+        targetNodeId: decision.id,
+        targetPortId: 'in',
+      })
+    })
+
+    expect(result.current.edges[0]).toMatchObject({
+      id: edge.id,
+      source: 'start',
+      target: decision.id,
+      sourceHandle: 'out',
+      targetHandle: 'in',
+    })
+    expect(result.current.selectedEdge?.target).toBe(decision.id)
   })
 
   it('keeps the world point under the cursor anchored when zooming', () => {
@@ -290,6 +365,27 @@ describe('useCanvasState', () => {
     expect(result.current.edges[0]).toMatchObject({ source: 'start', type: 'handoff' })
   })
 
+  it('creates a selected node connected from a specific source port at a drop point', () => {
+    const { result } = renderHook(() => useCanvasState())
+    const dropPoint = { x: 640, y: 260 }
+
+    act(() => {
+      result.current.createConnectedNodeFromPort('start', 'out', 'decision', dropPoint)
+    })
+
+    const created = Array.from(result.current.document.nodes.values()).find((node) => node.type === 'decision')
+    expect(created).toBeTruthy()
+    expect(getPortPosition(created!, 'in')).toEqual(dropPoint)
+    expect(result.current.edges).toHaveLength(1)
+    expect(result.current.edges[0]).toMatchObject({
+      source: 'start',
+      sourceHandle: 'out',
+      target: created!.id,
+      targetHandle: 'in',
+    })
+    expect(result.current.selectedNodeIds.has(created!.id)).toBe(true)
+  })
+
   it('adds stage and bottleneck nodes from typed canvas actions', () => {
     const { result } = renderHook(() => useCanvasState())
 
@@ -311,6 +407,6 @@ describe('useCanvasState', () => {
     act(() => result.current.updateEdgeData(edge.id, { expectation: 'Context moves with the work.' }))
 
     expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
-    expect(result.current.editorEdge?.data?.expectation).toBe('Context moves with the work.')
+    expect(result.current.selectedEdge?.data?.expectation).toBe('Context moves with the work.')
   })
 })

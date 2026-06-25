@@ -1,5 +1,6 @@
-import { type FormEvent } from 'react'
+import { type CSSProperties, type FormEvent } from 'react'
 import type { ProcessEdge, ProcessNode } from './canvasTypes'
+import { EDGE_COLOR_SWATCHES, normalizeEdgeColor } from './edgeColors'
 import { REVIEW_STATUS_OPTIONS, isReviewStatusValue } from './reviewStatus'
 import { useDraft } from './useDraft'
 
@@ -12,12 +13,14 @@ function makeFieldId(prefix: string, label: string): string {
 interface PropertiesPanelProps {
   node: ProcessNode | null
   edge: ProcessEdge | null
+  nodes?: ProcessNode[]
   onUpdateNode: (nodeId: string, data: Record<string, unknown>) => void
   onUpdateEdge: (edgeId: string, data: Record<string, unknown>) => void
+  onDeleteEdge?: () => void
   onClose: () => void
 }
 
-export function PropertiesPanel({ node, edge, onUpdateNode, onUpdateEdge, onClose }: PropertiesPanelProps) {
+export function PropertiesPanel({ node, edge, nodes = [], onUpdateNode, onUpdateEdge, onDeleteEdge, onClose }: PropertiesPanelProps) {
   if (!node && !edge) return null
 
   return (
@@ -32,7 +35,7 @@ export function PropertiesPanel({ node, edge, onUpdateNode, onUpdateEdge, onClos
       </div>
 
       {node && <NodeEditor node={node} onUpdate={onUpdateNode} />}
-      {edge && !node && <HandoffEditor edge={edge} onUpdate={onUpdateEdge} />}
+      {edge && !node && <HandoffEditor edge={edge} nodes={nodes} onUpdate={onUpdateEdge} onDelete={onDeleteEdge} />}
     </div>
   )
 }
@@ -43,6 +46,35 @@ function getNodeLabel(node: ProcessNode): string {
   if (node.data.kind === 'stage') return 'Stage'
   if (node.data.kind === 'bottleneck') return 'Bottleneck'
   return node.data.kind === 'start' ? 'Start' : 'End'
+}
+
+function getNodeTitle(node: ProcessNode): string {
+  switch (node.data.kind) {
+    case 'start':
+    case 'end':
+      return node.data.label || node.id
+    case 'activity':
+    case 'decision':
+    case 'stage':
+    case 'bottleneck':
+      return node.data.title || node.id
+  }
+}
+
+function getNodeOptionLabel(node: ProcessNode): string {
+  return `${getNodeLabel(node)} - ${getNodeTitle(node)}`
+}
+
+function getDefaultEndpointPort(node: ProcessNode, role: 'source' | 'target'): 'out' | 'in' | null {
+  if (role === 'source') {
+    return node.data.kind === 'end' ? null : 'out'
+  }
+
+  return node.data.kind === 'start' ? null : 'in'
+}
+
+function edgeSwatchStyle(color: string): CSSProperties {
+  return { '--edge-color': color } as CSSProperties
 }
 
 interface NodeEditorProps {
@@ -243,15 +275,72 @@ function DecisionEditor({ nodeId, title, criteria, owner, decisionOutcomes, onUp
 
 function HandoffEditor({
   edge,
+  nodes,
   onUpdate,
+  onDelete,
 }: {
   edge: ProcessEdge
+  nodes: ProcessNode[]
   onUpdate: (edgeId: string, data: Record<string, unknown>) => void
+  onDelete?: () => void
 }) {
   const data = edge.data ?? {}
+  const sourceOptions = nodes.filter(
+    (candidate) => candidate.id !== edge.target && getDefaultEndpointPort(candidate, 'source'),
+  )
+  const targetOptions = nodes.filter(
+    (candidate) => candidate.id !== edge.source && getDefaultEndpointPort(candidate, 'target'),
+  )
+
+  function handleSourceChange(nodeId: string): void {
+    if (nodeId === edge.target) return
+    const sourceNode = nodes.find((candidate) => candidate.id === nodeId)
+    if (!sourceNode) return
+    const sourcePortId = getDefaultEndpointPort(sourceNode, 'source')
+    if (!sourcePortId) return
+    onUpdate(edge.id, { sourceNodeId: nodeId, sourcePortId })
+  }
+
+  function handleTargetChange(nodeId: string): void {
+    if (nodeId === edge.source) return
+    const targetNode = nodes.find((candidate) => candidate.id === nodeId)
+    if (!targetNode) return
+    const targetPortId = getDefaultEndpointPort(targetNode, 'target')
+    if (!targetPortId) return
+    onUpdate(edge.id, { targetNodeId: nodeId, targetPortId })
+  }
+
   return (
     <form className="properties-form">
+      {nodes.length > 0 && (
+        <>
+          <label htmlFor={makeFieldId('handoff', 'From node')}>From node</label>
+          <select
+            id={makeFieldId('handoff', 'From node')}
+            value={edge.source}
+            onChange={(event) => handleSourceChange(event.target.value)}
+          >
+            {sourceOptions.map((option) => (
+              <option key={option.id} value={option.id}>{getNodeOptionLabel(option)}</option>
+            ))}
+          </select>
+          <label htmlFor={makeFieldId('handoff', 'To node')}>To node</label>
+          <select
+            id={makeFieldId('handoff', 'To node')}
+            value={edge.target}
+            onChange={(event) => handleTargetChange(event.target.value)}
+          >
+            {targetOptions.map((option) => (
+              <option key={option.id} value={option.id}>{getNodeOptionLabel(option)}</option>
+            ))}
+          </select>
+        </>
+      )}
       <SemanticTextInput prefix="handoff" label="Label" value={data.label ?? ''} onCommit={(value) => onUpdate(edge.id, { label: value })} />
+      <ConnectionColorPicker
+        color={data.color}
+        onPick={(color) => onUpdate(edge.id, { color })}
+      />
       <SemanticTextInput prefix="handoff" label="From role" value={data.fromRole ?? ''} onCommit={(value) => onUpdate(edge.id, { fromRole: value })} />
       <SemanticTextInput prefix="handoff" label="To role" value={data.toRole ?? ''} onCommit={(value) => onUpdate(edge.id, { toRole: value })} />
       <SemanticTextInput prefix="handoff" label="Artifact" value={data.artifact ?? ''} onCommit={(value) => onUpdate(edge.id, { artifact: value })} />
@@ -271,7 +360,46 @@ function HandoffEditor({
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
+      {onDelete && (
+        <button
+          type="button"
+          className="properties-danger-action"
+          onClick={onDelete}
+        >
+          Delete connector
+        </button>
+      )}
     </form>
+  )
+}
+
+function ConnectionColorPicker({
+  color,
+  onPick,
+}: {
+  color?: string
+  onPick: (color: string) => void
+}) {
+  const selectedColor = normalizeEdgeColor(color)
+
+  return (
+    <div className="properties-color-field">
+      <span className="properties-color-label">Color</span>
+      <div className="edge-color-swatches properties-edge-color-swatches" aria-label="Connection color">
+        {EDGE_COLOR_SWATCHES.map((swatch) => (
+          <button
+            key={swatch.value}
+            type="button"
+            className="edge-color-swatch"
+            aria-label={`Set connection color ${swatch.name}`}
+            aria-pressed={selectedColor === swatch.value}
+            title={swatch.name}
+            style={edgeSwatchStyle(swatch.value)}
+            onClick={() => onPick(swatch.value)}
+          />
+        ))}
+      </div>
+    </div>
   )
 }
 

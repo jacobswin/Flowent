@@ -1,12 +1,11 @@
 import { PROCESS_ELEMENTS, type ProcessElementType } from './processElements'
+import { DRAG_MIME_TYPE } from './processElementDrag'
 import { TopDockPanel } from './TopDockPanel'
 
 interface ProcessElementPaletteProps {
   onQuickCreate: (type: ProcessElementType) => void
   defaultCollapsed?: boolean
 }
-
-const DRAG_MIME_TYPE = 'application/x-flowent-process-element'
 
 export function ProcessElementPalette({ onQuickCreate, defaultCollapsed = true }: ProcessElementPaletteProps) {
   return (
@@ -48,18 +47,6 @@ export function ProcessElementPalette({ onQuickCreate, defaultCollapsed = true }
       </div>
     </TopDockPanel>
   )
-}
-
-export function hasDraggedProcessElement(dataTransfer: DataTransfer): boolean {
-  return Array.from(dataTransfer.types).includes(DRAG_MIME_TYPE)
-}
-
-export function readDraggedProcessElement(dataTransfer: DataTransfer): ProcessElementType | null {
-  const raw = dataTransfer.getData(DRAG_MIME_TYPE)
-  if (raw === 'stage' || raw === 'activity' || raw === 'decision' || raw === 'bottleneck' || raw === 'end') {
-    return raw
-  }
-  return null
 }
 
 function getElementGlyph(type: ProcessElementType): string {

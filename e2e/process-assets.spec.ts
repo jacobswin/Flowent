@@ -72,7 +72,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(800)
 })
 
-test('models Stages What Who When How assets and persists them', async ({ page }) => {
+test('models What / Who / When / How process assets and persists them', async ({ page }) => {
   await page.keyboard.press('0')
 
   await addElement(page, 'Activity')

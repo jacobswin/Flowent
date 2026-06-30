@@ -41,9 +41,9 @@ test('top dock panels expand and collapse from fixed headers', async ({ page }) 
   await expect(page.getByText('No alignment gaps found in the current map.')).toHaveCount(0)
 
   await expandDockPanel(page, 'Process assets')
-  await expect(page.getByLabel('Stages completeness')).toBeVisible()
+  await expect(page.getByLabel('Process completeness')).toBeVisible()
   await page.getByRole('button', { name: 'Collapse Process assets' }).click()
-  await expect(page.getByLabel('Stages completeness')).toHaveCount(0)
+  await expect(page.getByLabel('Process completeness')).toHaveCount(0)
 
   await expandDockPanel(page, 'Focus view')
   await page.getByRole('button', { name: 'Handoff paths' }).click()

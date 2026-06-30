@@ -8,7 +8,7 @@
 
 Flowent MVP was completed with 7 milestones, but the interaction model became too text-heavy and workflow-heavy. The product currently emphasizes forms, multi-tab state, and lifecycle workflows before making modeling feel fast.
 
-The new direction is to prioritize **rapid visual process modeling** similar to Stages:
+The new direction is to prioritize **rapid visual process modeling**:
 
 - build process structure quickly on a canvas
 - render process flow immediately

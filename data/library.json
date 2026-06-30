@@ -2,76 +2,18 @@
   "folders": [],
   "maps": [
     {
-      "id": "map-mqt15ueh-ndq2ho",
+      "id": "map-mq33644d-zwr3yd",
       "name": "Welcome",
       "folderId": null,
       "order": 0,
-      "updatedAt": 1782363422249
+      "updatedAt": 1780794673501
     },
     {
-      "id": "map-mqt15uej-vr5kgv",
+      "id": "map-mq33644e-yrfra6",
       "name": "Welcome",
       "folderId": null,
       "order": 1,
-      "document": {
-        "id": "map-mqt15uej-vr5kgv",
-        "nodes": {
-          "start": {
-            "id": "start",
-            "type": "start",
-            "x": 360,
-            "y": 200,
-            "width": 120,
-            "height": 56,
-            "title": "Start",
-            "roleTags": [],
-            "ports": [
-              {
-                "id": "out",
-                "side": "right"
-              }
-            ]
-          },
-          "activity-1782363423852": {
-            "id": "activity-1782363423852",
-            "type": "activity",
-            "x": 320,
-            "y": 240,
-            "width": 220,
-            "height": 112,
-            "title": "New activity",
-            "summary": "",
-            "roleTags": [],
-            "expectations": "",
-            "ports": [
-              {
-                "id": "in",
-                "side": "left"
-              },
-              {
-                "id": "out",
-                "side": "right"
-              }
-            ]
-          }
-        },
-        "edges": {},
-        "selectedNodeIds": [
-          "start"
-        ],
-        "selectedEdgeIds": [],
-        "viewport": {
-          "x": 0,
-          "y": 0,
-          "zoom": 1
-        },
-        "meta": {
-          "dirty": false,
-          "version": 6
-        }
-      },
-      "updatedAt": 1782363425465
+      "updatedAt": 1780794673502
     }
-  ],
-  "comments": {}
+  ]
 }

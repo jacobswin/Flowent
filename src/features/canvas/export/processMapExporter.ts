@@ -1,4 +1,5 @@
 import type { GraphDocument, GraphNode } from '../canvasTypes'
+import { normalizeEdgeColor } from '../edgeColors'
 
 interface ExportedNode {
   id: string
@@ -19,6 +20,7 @@ interface ExportedEdge {
   sourcePortId: string
   targetPortId: string
   label: string
+  color: string
   fields: Record<string, string>
 }
 
@@ -62,6 +64,7 @@ export function exportProcessMap(doc: GraphDocument): ExportedProcessMap {
       sourcePortId: edge.sourcePortId,
       targetPortId: edge.targetPortId,
       label: edge.label,
+      color: normalizeEdgeColor(edge.color),
       fields: extractEdgeFields(edge),
     })
   }
@@ -182,12 +185,13 @@ export function exportProcessMapAsSvg(doc: GraphDocument): string {
       const x2 = target.x - xOffset
       const y2 = target.y - yOffset + target.height / 2
       const label = edge.label || edge.fields.expectation || edge.fields.artifact
+      const stroke = normalizeEdgeColor(edge.color)
       const labelEl = label
         ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#475569">${escapeXml(truncate(label, 40))}</text>`
         : ''
       return [
-        `<path d="M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}" stroke="#94a3b8" stroke-width="1.5" fill="none" />`,
-        `<polygon points="${x2 - 8},${y2 - 4} ${x2 - 8},${y2 + 4} ${x2},${y2}" fill="#94a3b8" />`,
+        `<path d="M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="1.5" fill="none" />`,
+        `<polygon points="${x2 - 8},${y2 - 4} ${x2 - 8},${y2 + 4} ${x2},${y2}" fill="${stroke}" />`,
         labelEl,
       ].join('')
     })

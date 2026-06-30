@@ -19,9 +19,9 @@ describe('keyboard map', () => {
     expect(mapKeyToAction({ key: 'y', metaKey: false, ctrlKey: true, shiftKey: false })).toBe('redo')
   })
 
-  it('maps delete shortcuts', () => {
-    expect(mapKeyToAction({ key: 'Delete', metaKey: false, ctrlKey: false, shiftKey: false })).toBe('delete')
-    expect(mapKeyToAction({ key: 'Backspace', metaKey: false, ctrlKey: false, shiftKey: false })).toBe('delete')
+  it('does not map delete keys to destructive canvas actions', () => {
+    expect(mapKeyToAction({ key: 'Delete', metaKey: false, ctrlKey: false, shiftKey: false })).toBeNull()
+    expect(mapKeyToAction({ key: 'Backspace', metaKey: false, ctrlKey: false, shiftKey: false })).toBeNull()
   })
 
   it('returns null for unrelated keys', () => {

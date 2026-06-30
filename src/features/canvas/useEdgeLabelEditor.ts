@@ -5,7 +5,7 @@ export interface EdgeLabelAnchor {
   y: number
 }
 
-interface EdgeLabelEditorApi {
+export interface EdgeLabelEditorApi {
   openEdgeId: string | null
   anchor: EdgeLabelAnchor | null
   openAt: (edgeId: string, anchor: EdgeLabelAnchor) => void

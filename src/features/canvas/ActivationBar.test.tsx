@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ActivationBar } from './ActivationBar'
 import type { ActivationState } from './activation/processActivation'
 
@@ -11,10 +11,30 @@ const base: ActivationState = {
 }
 
 describe('ActivationBar', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('shows Draft status when no activation exists', () => {
     render(<ActivationBar activation={base} eligible={false} reasons={['Missing roles']} onActivate={() => {}} />)
     expect(screen.getByText('Draft')).toBeInTheDocument()
     expect(screen.getByText('Missing roles')).toBeInTheDocument()
+  })
+
+  it('renders repeated activation reasons without duplicate React keys', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    render(
+      <ActivationBar
+        activation={base}
+        eligible={false}
+        reasons={['Activity needs responsible roles', 'Activity needs responsible roles']}
+        onActivate={() => {}}
+      />,
+    )
+
+    expect(screen.getAllByText('Activity needs responsible roles')).toHaveLength(2)
+    expect(consoleError.mock.calls.filter(([message]) => String(message).includes('same key'))).toHaveLength(0)
   })
 
   it('shows bottleneck metrics when at least one bottleneck exists', () => {

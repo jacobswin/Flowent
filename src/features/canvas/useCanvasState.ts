@@ -4,13 +4,18 @@ import type {
   GraphDocument,
   GraphEdge,
   GraphNode,
+  GuidanceKind,
+  ActivityResponsibility,
+  GuidanceAsset,
+  MilestoneAsset,
   ProcessEdge,
   ProcessNode,
   ReviewStatus,
+  WorkProductAsset,
 } from './canvasTypes'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
-import { planQuickCreate } from './engine/quickCreate'
+import { planConnectedNodeFromPort, planQuickCreate } from './engine/quickCreate'
 import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
@@ -18,9 +23,57 @@ import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focu
 import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
 import { getBottleneckMetrics } from './diagnostics/bottleneckMetrics'
 import { buildActivationSnapshot, deriveActivationStatus, isActivationEligible, type ActivationState } from './activation/processActivation'
+import { DEFAULT_EDGE_COLOR } from './edgeColors'
+import {
+  addGuidanceAsset,
+  addMilestoneAsset,
+  addResponsibility,
+  addWorkProductAsset,
+  DEFAULT_WORK_PRODUCT_MATURITY,
+  deleteGuidanceAsset,
+  deleteMilestoneAsset,
+  deleteWorkProductAsset,
+  getActivityResponsibilities,
+  getEdgeAssetSummary,
+  getNodeAssetSummary,
+  linkGuidanceToHandoff,
+  linkGuidanceToActivity,
+  linkGuidanceToWorkProduct,
+  linkWorkProductToActivity,
+  linkWorkProductToHandoff,
+  renameGuidanceAsset,
+  renameMilestoneAsset,
+  renameWorkProductAsset,
+  removeMilestoneWorkProductState,
+  removeResponsibility,
+  unlinkGuidanceFromHandoff,
+  unlinkGuidanceFromActivity,
+  unlinkGuidanceFromWorkProduct,
+  unlinkWorkProductFromActivity,
+  unlinkWorkProductFromHandoff,
+  updateGuidanceAsset,
+  updateMilestoneAsset,
+  updateWorkProductAsset,
+  upsertMilestoneWorkProductState,
+} from './processAssets'
 
-function toProcessNode(node: GraphNode): ProcessNode {
+type ProcessAssetKind = 'workProduct' | 'guidance' | 'milestone'
+type ProcessAssetSelection = { kind: ProcessAssetKind; id: string }
+type ProcessAssetRelation =
+  | 'producer'
+  | 'consumer'
+  | 'handoff'
+  | 'guidance'
+  | 'node'
+  | 'edge'
+  | 'workProduct'
+  | 'stage'
+  | 'workProductState'
+type ProcessAssetRelationOptions = { maturity?: string }
+
+function toProcessNode(node: GraphNode, doc: GraphDocument): ProcessNode {
   if (node.type === 'activity') {
+    const responsibilities = getActivityResponsibilities(node)
     return {
       id: node.id,
       type: 'activity',
@@ -29,7 +82,9 @@ function toProcessNode(node: GraphNode): ProcessNode {
         title: node.title,
         summary: node.summary ?? '',
         roleIds: node.roleTags,
+        responsibilities,
         expectations: node.expectations ?? '',
+        assetSummary: getNodeAssetSummary(doc, node.id),
         kind: 'activity',
       },
     }
@@ -61,6 +116,7 @@ function toProcessNode(node: GraphNode): ProcessNode {
         entryCondition: node.entryCondition ?? '',
         exitCondition: node.exitCondition ?? '',
         owner: node.owner ?? '',
+        assetSummary: getNodeAssetSummary(doc, node.id),
         kind: 'stage',
       },
     }
@@ -93,7 +149,11 @@ function toProcessNode(node: GraphNode): ProcessNode {
   }
 }
 
-function toProcessEdge(edge: GraphEdge): ProcessEdge {
+function toProcessEdge(edge: GraphEdge, doc: GraphDocument): ProcessEdge {
+  const assetSummary = getEdgeAssetSummary(doc, edge.id)
+  const workProductIds = edge.workProductIds ?? Object.values(doc.processAssets.workProducts)
+    .filter((asset) => asset.handoffEdgeIds.includes(edge.id))
+    .map((asset) => asset.id)
   return {
     id: edge.id,
     type: 'handoff',
@@ -103,12 +163,15 @@ function toProcessEdge(edge: GraphEdge): ProcessEdge {
     targetHandle: edge.targetPortId,
     data: {
       label: edge.label,
+      color: edge.color ?? DEFAULT_EDGE_COLOR,
       fromRole: edge.fromRole ?? '',
       toRole: edge.toRole ?? '',
       artifact: edge.artifact ?? '',
       expectation: edge.expectation ?? '',
       readinessSignal: edge.readinessSignal ?? '',
       reviewStatus: edge.reviewStatus ?? 'unclear',
+      workProductIds,
+      assetSummary,
     },
   }
 }
@@ -198,6 +261,7 @@ type NodeDataPatch = {
   impact?: string
   suspectedCause?: string
   reviewStatus?: ReviewStatus
+  responsibilities?: ActivityResponsibility[]
 }
 
 interface UseCanvasStateOptions {
@@ -240,8 +304,8 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   )
   const activationEligible = useMemo(() => isActivationEligible(document), [document])
 
-  const nodes = useMemo(() => Array.from(document.nodes.values()).map(toProcessNode), [document])
-  const edges = useMemo(() => Array.from(document.edges.values()).map(toProcessEdge), [document])
+  const nodes = useMemo(() => Array.from(document.nodes.values()).map((node) => toProcessNode(node, document)), [document])
+  const edges = useMemo(() => Array.from(document.edges.values()).map((edge) => toProcessEdge(edge, document)), [document])
   const selectedNodeIds = useMemo(() => document.selectedNodeIds, [document])
   const selectedNode = useMemo(() => {
     const ids = Array.from(selectedNodeIds)
@@ -253,14 +317,15 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     const ids = Array.from(selectedEdgeIds)
     if (ids.length !== 1) return null
     const edge = document.edges.get(ids[0])
-    return edge ? toProcessEdge(edge) : null
-  }, [document.edges, selectedEdgeIds])
+    return edge ? toProcessEdge(edge, document) : null
+  }, [document, selectedEdgeIds])
   const [editorEdgeId, setEditorEdgeId] = useState<string | null>(null)
   const editorEdge = useMemo(() => {
     if (!editorEdgeId) return null
     const edge = document.edges.get(editorEdgeId)
-    return edge ? toProcessEdge(edge) : null
-  }, [document.edges, editorEdgeId])
+    return edge ? toProcessEdge(edge, document) : null
+  }, [document, editorEdgeId])
+  const [selectedAsset, setSelectedAsset] = useState<ProcessAssetSelection | null>(null)
 
   const applyCommand = useCallback((command: GraphCommand) => {
     let nextSelected: Set<string> | null = null
@@ -326,17 +391,41 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         type: 'SelectNode',
         payload: { id: nodeId, additive },
       })
+      setEditorEdgeId(null)
     },
     [applyCommand],
   )
 
   const onEdgeClick = useCallback(
     (edgeId: string, additive: boolean) => {
+      // Compute the post-command selection without going through the
+      // async setHistory path so we can decide synchronously whether
+      // the click just removed the edge from the selection (shift+click
+      // on an already-selected edge to deselect).
+      const currentSelection = history.present.selectedEdgeIds
+      const isCurrentlySelected = currentSelection.has(edgeId)
+      const nextSelected = new Set(currentSelection)
+      if (additive) {
+        if (isCurrentlySelected) {
+          nextSelected.delete(edgeId)
+        } else {
+          nextSelected.add(edgeId)
+        }
+      } else {
+        nextSelected.clear()
+        nextSelected.add(edgeId)
+      }
       applyCommand({ type: 'SelectEdge', payload: { id: edgeId, additive } })
-      setEditorEdgeId(edgeId)
+
+      if (!nextSelected.has(edgeId)) {
+        setEditorEdgeId(null)
+        setEditorNodeId(null)
+        return
+      }
+      setEditorEdgeId(null)
       setEditorNodeId(null)
     },
-    [applyCommand],
+    [applyCommand, history.present.selectedEdgeIds],
   )
 
   const toggleConnectorMode = useCallback(() => {
@@ -346,6 +435,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const startConnection = useCallback((nodeId: string, portId: string) => {
     setConnectionStart({ nodeId, portId })
+  }, [])
+
+  const cancelConnection = useCallback(() => {
+    setConnectionStart(null)
   }, [])
 
   const endConnection = useCallback((targetNodeId: string, targetPortId = 'in') => {
@@ -370,6 +463,11 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const openEditor = useCallback((nodeId: string) => {
     setEditorNodeId(nodeId)
     setEditorEdgeId(null)
+  }, [])
+
+  const openEdgeEditor = useCallback((edgeId: string) => {
+    setEditorEdgeId(edgeId)
+    setEditorNodeId(null)
   }, [])
 
   const closeEditor = useCallback(() => {
@@ -434,6 +532,34 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     })
   }, [])
 
+  const createConnectedNodeFromPort = useCallback((
+    sourceNodeId: string,
+    sourcePortId: string,
+    targetType: ProcessElementType,
+    dropPosition: { x: number; y: number },
+  ) => {
+    setHistory((current) => {
+      const newNodeId = `${targetType}-${Date.now()}`
+      const newEdgeId = `edge-${Date.now()}`
+      const plan = planConnectedNodeFromPort(current.present, {
+        sourceNodeId,
+        sourcePortId,
+        targetType,
+        newNodeId,
+        newEdgeId,
+        dropPosition,
+      })
+
+      let next = runCommand(current.present, { type: 'AddNode', payload: plan.node })
+      if (plan.edge) {
+        next = runCommand(next, { type: 'AddEdge', payload: plan.edge })
+      }
+      next = runCommand(next, { type: 'SelectNode', payload: { id: plan.node.id, additive: false } })
+      return pushHistory(current, next)
+    })
+    setConnectionStart(null)
+  }, [])
+
   const removeSelected = useCallback(() => {
     setHistory((current) => {
       let next = current.present
@@ -469,6 +595,11 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       }
 
       if (next === current.present) return current
+      // The currently-open editor may reference a node or edge that just
+      // got deleted. Close both editors so an undo doesn't re-open a
+      // stale panel for a missing entity.
+      setEditorNodeId(null)
+      setEditorEdgeId(null)
       return pushHistory(current, {
         ...next,
         selectedNodeIds: new Set(),
@@ -489,6 +620,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
             ...(typeof data.criteria === 'string' ? { criteria: data.criteria } : {}),
             ...(Array.isArray(data.decisionOutcomes) ? { decisionOutcomes: data.decisionOutcomes } : {}),
             ...(Array.isArray(data.roleIds) ? { roleTags: data.roleIds } : {}),
+            ...(Array.isArray(data.responsibilities) ? {
+              responsibilities: data.responsibilities,
+              roleTags: data.responsibilities.map((responsibility) => responsibility.roleName),
+            } : {}),
             ...(typeof data.expectations === 'string' ? { expectations: data.expectations } : {}),
             ...(typeof data.owner === 'string' ? { owner: data.owner } : {}),
             ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
@@ -506,13 +641,19 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   )
 
   type EdgeDataPatch = {
+    sourceNodeId?: string
+    sourcePortId?: string
+    targetNodeId?: string
+    targetPortId?: string
     label?: string
+    color?: string
     fromRole?: string
     toRole?: string
     artifact?: string
     expectation?: string
     readinessSignal?: string
     reviewStatus?: ReviewStatus
+    workProductIds?: string[]
   }
 
   const updateEdgeData = useCallback(
@@ -522,13 +663,19 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         payload: {
           id: edgeId,
           patch: {
+            ...(typeof data.sourceNodeId === 'string' ? { sourceNodeId: data.sourceNodeId } : {}),
+            ...(typeof data.sourcePortId === 'string' ? { sourcePortId: data.sourcePortId } : {}),
+            ...(typeof data.targetNodeId === 'string' ? { targetNodeId: data.targetNodeId } : {}),
+            ...(typeof data.targetPortId === 'string' ? { targetPortId: data.targetPortId } : {}),
             ...(typeof data.label === 'string' ? { label: data.label } : {}),
+            ...(typeof data.color === 'string' ? { color: data.color } : {}),
             ...(typeof data.fromRole === 'string' ? { fromRole: data.fromRole } : {}),
             ...(typeof data.toRole === 'string' ? { toRole: data.toRole } : {}),
             ...(typeof data.artifact === 'string' ? { artifact: data.artifact } : {}),
             ...(typeof data.expectation === 'string' ? { expectation: data.expectation } : {}),
             ...(typeof data.readinessSignal === 'string' ? { readinessSignal: data.readinessSignal } : {}),
             ...(isReviewStatus(data.reviewStatus) ? { reviewStatus: data.reviewStatus } : {}),
+            ...(Array.isArray(data.workProductIds) ? { workProductIds: data.workProductIds } : {}),
           },
         },
       })
@@ -708,17 +855,295 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     return () => clearTimeout(timer)
   }, [document])
 
-  const selectDiagnosticTarget = useCallback((targetType: 'node' | 'edge', targetId: string) => {
+  const mutateDocument = useCallback((mutator: (doc: GraphDocument) => GraphDocument) => {
+    setHistory((current) => {
+      const next = mutator(current.present)
+      return next === current.present ? current : pushHistory(current, next)
+    })
+  }, [])
+
+  const createId = useCallback((prefix: string) => (
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  ), [])
+
+  const addActivityResponsibility = useCallback((
+    nodeId: string,
+    responsibility: { roleName: string; kind: ActivityResponsibility['kind'] },
+  ) => {
+    mutateDocument((doc) => addResponsibility(doc, nodeId, responsibility))
+  }, [mutateDocument])
+
+  const removeActivityResponsibility = useCallback((nodeId: string, responsibilityId: string) => {
+    mutateDocument((doc) => removeResponsibility(doc, nodeId, responsibilityId))
+  }, [mutateDocument])
+
+  const createWorkProductForActivity = useCallback((
+    nodeId: string,
+    relation: 'input' | 'output',
+    title: string,
+    maturity?: string,
+  ) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    const nextMaturity = maturity?.trim() || (relation === 'input' ? 'Needed' : DEFAULT_WORK_PRODUCT_MATURITY)
+    mutateDocument((doc) => {
+      const id = createId('wp')
+      return linkWorkProductToActivity(
+        addWorkProductAsset(doc, { id, title: trimmed, state: nextMaturity, description: '' }),
+        id,
+        nodeId,
+        relation,
+        nextMaturity,
+      )
+    })
+  }, [createId, mutateDocument])
+
+  const linkExistingWorkProductToActivity = useCallback((
+    nodeId: string,
+    relation: 'input' | 'output',
+    workProductId: string,
+    maturity?: string,
+  ) => {
+    mutateDocument((doc) => linkWorkProductToActivity(doc, workProductId, nodeId, relation, maturity))
+  }, [mutateDocument])
+
+  const unlinkExistingWorkProductFromActivity = useCallback((
+    nodeId: string,
+    relation: 'input' | 'output',
+    workProductId: string,
+    maturity?: string,
+  ) => {
+    mutateDocument((doc) => unlinkWorkProductFromActivity(doc, workProductId, nodeId, relation, maturity))
+  }, [mutateDocument])
+
+  const createGuidanceForActivity = useCallback((
+    nodeId: string,
+    data: { title: string; kind: GuidanceKind },
+  ) => {
+    const title = data.title.trim()
+    if (!title) return
+    mutateDocument((doc) => {
+      const id = createId('guide')
+      return linkGuidanceToActivity(
+        addGuidanceAsset(doc, { id, title, kind: data.kind, description: '', url: '' }),
+        id,
+        nodeId,
+      )
+    })
+  }, [createId, mutateDocument])
+
+  const linkExistingGuidanceToActivity = useCallback((nodeId: string, guidanceId: string) => {
+    mutateDocument((doc) => linkGuidanceToActivity(doc, guidanceId, nodeId))
+  }, [mutateDocument])
+
+  const unlinkExistingGuidanceFromActivity = useCallback((nodeId: string, guidanceId: string) => {
+    mutateDocument((doc) => unlinkGuidanceFromActivity(doc, guidanceId, nodeId))
+  }, [mutateDocument])
+
+  const createMilestoneForStage = useCallback((stageNodeId: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    mutateDocument((doc) => addMilestoneAsset(doc, {
+      id: createId('milestone'),
+      title: trimmed,
+      description: '',
+      stageNodeId,
+      workProductStates: [],
+    }))
+  }, [createId, mutateDocument])
+
+  const addMilestoneWorkProductState = useCallback((milestoneId: string, workProductId: string, state: string) => {
+    const trimmed = state.trim()
+    if (!trimmed) return
+    mutateDocument((doc) => upsertMilestoneWorkProductState(doc, milestoneId, workProductId, trimmed))
+  }, [mutateDocument])
+
+  const createWorkProductForHandoff = useCallback((edgeId: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    mutateDocument((doc) => {
+      const id = createId('wp')
+      return linkWorkProductToHandoff(
+        addWorkProductAsset(doc, { id, title: trimmed, state: 'Moved', description: '' }),
+        id,
+        edgeId,
+      )
+    })
+  }, [createId, mutateDocument])
+
+  const linkExistingWorkProductToHandoff = useCallback((edgeId: string, workProductId: string) => {
+    mutateDocument((doc) => linkWorkProductToHandoff(doc, workProductId, edgeId))
+  }, [mutateDocument])
+
+  const unlinkExistingWorkProductFromHandoff = useCallback((workProductId: string, edgeId: string) => {
+    mutateDocument((doc) => unlinkWorkProductFromHandoff(doc, workProductId, edgeId))
+  }, [mutateDocument])
+
+  const linkExistingGuidanceToWorkProduct = useCallback((guidanceId: string, workProductId: string) => {
+    mutateDocument((doc) => linkGuidanceToWorkProduct(doc, guidanceId, workProductId))
+  }, [mutateDocument])
+
+  const removeExistingMilestoneWorkProductState = useCallback((milestoneId: string, workProductId: string) => {
+    mutateDocument((doc) => removeMilestoneWorkProductState(doc, milestoneId, workProductId))
+  }, [mutateDocument])
+
+  const createProcessAsset = useCallback((
+    kind: ProcessAssetKind,
+    data: { title: string; kind?: GuidanceKind },
+  ) => {
+    const title = data.title.trim()
+    if (!title) return
+    const id = createId(kind === 'workProduct' ? 'wp' : kind === 'guidance' ? 'guide' : 'milestone')
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') {
+        return addWorkProductAsset(doc, { id, title, state: 'Draft', description: '' })
+      }
+      if (kind === 'guidance') {
+        return addGuidanceAsset(doc, { id, title, kind: data.kind ?? 'checklist', description: '', url: '' })
+      }
+      return addMilestoneAsset(doc, {
+        id,
+        title,
+        description: '',
+        stageNodeId: null,
+        workProductStates: [],
+      })
+    })
+    setSelectedAsset({ kind, id })
+  }, [createId, mutateDocument])
+
+  const updateProcessAsset = useCallback((
+    kind: ProcessAssetKind,
+    id: string,
+    patch: Partial<WorkProductAsset> | Partial<GuidanceAsset> | Partial<MilestoneAsset>,
+  ) => {
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') return updateWorkProductAsset(doc, id, patch as Partial<WorkProductAsset>)
+      if (kind === 'guidance') return updateGuidanceAsset(doc, id, patch as Partial<GuidanceAsset>)
+      return updateMilestoneAsset(doc, id, patch as Partial<MilestoneAsset>)
+    })
+  }, [mutateDocument])
+
+  const linkProcessAsset = useCallback((kind: ProcessAssetKind, id: string, relation: ProcessAssetRelation, targetId: string, options?: ProcessAssetRelationOptions) => {
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') {
+        if (relation === 'producer') return linkWorkProductToActivity(doc, id, targetId, 'output', options?.maturity)
+        if (relation === 'consumer') return linkWorkProductToActivity(doc, id, targetId, 'input', options?.maturity)
+        if (relation === 'handoff') return linkWorkProductToHandoff(doc, id, targetId)
+        if (relation === 'guidance') return linkGuidanceToWorkProduct(doc, targetId, id)
+        return doc
+      }
+      if (kind === 'guidance') {
+        if (relation === 'node') return linkGuidanceToActivity(doc, id, targetId)
+        if (relation === 'edge' || relation === 'handoff') return linkGuidanceToHandoff(doc, id, targetId)
+        if (relation === 'workProduct') return linkGuidanceToWorkProduct(doc, id, targetId)
+        return doc
+      }
+      if (relation === 'stage') return updateMilestoneAsset(doc, id, { stageNodeId: targetId || null })
+      return doc
+    })
+  }, [mutateDocument])
+
+  const unlinkProcessAsset = useCallback((kind: ProcessAssetKind, id: string, relation: ProcessAssetRelation, targetId: string, options?: ProcessAssetRelationOptions) => {
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') {
+        if (relation === 'producer') return unlinkWorkProductFromActivity(doc, id, targetId, 'output', options?.maturity)
+        if (relation === 'consumer') return unlinkWorkProductFromActivity(doc, id, targetId, 'input', options?.maturity)
+        if (relation === 'handoff') return unlinkWorkProductFromHandoff(doc, id, targetId)
+        if (relation === 'guidance') return unlinkGuidanceFromWorkProduct(doc, targetId, id)
+        return doc
+      }
+      if (kind === 'guidance') {
+        if (relation === 'node') return unlinkGuidanceFromActivity(doc, id, targetId)
+        if (relation === 'edge' || relation === 'handoff') return unlinkGuidanceFromHandoff(doc, id, targetId)
+        if (relation === 'workProduct') return unlinkGuidanceFromWorkProduct(doc, id, targetId)
+        return doc
+      }
+      if (relation === 'stage') return updateMilestoneAsset(doc, id, { stageNodeId: null })
+      if (relation === 'workProductState') return removeMilestoneWorkProductState(doc, id, targetId)
+      return doc
+    })
+  }, [mutateDocument])
+
+  const renameProcessAsset = useCallback((kind: 'workProduct' | 'guidance' | 'milestone', id: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') return renameWorkProductAsset(doc, id, trimmed)
+      if (kind === 'guidance') return renameGuidanceAsset(doc, id, trimmed)
+      return renameMilestoneAsset(doc, id, trimmed)
+    })
+  }, [mutateDocument])
+
+  const deleteProcessAsset = useCallback((kind: 'workProduct' | 'guidance' | 'milestone', id: string) => {
+    mutateDocument((doc) => {
+      if (kind === 'workProduct') return deleteWorkProductAsset(doc, id)
+      if (kind === 'guidance') return deleteGuidanceAsset(doc, id)
+      return deleteMilestoneAsset(doc, id)
+    })
+    setSelectedAsset((current) => current?.kind === kind && current.id === id ? null : current)
+  }, [mutateDocument])
+
+  const selectProcessAsset = useCallback((kind: 'workProduct' | 'guidance' | 'milestone', id: string) => {
+    setSelectedAsset({ kind, id })
+    const assetDoc = history.present
+    let target: { type: 'node' | 'edge'; id: string } | null
+    if (kind === 'workProduct') {
+      const asset = assetDoc.processAssets.workProducts[id]
+      const nodeId = asset?.producerNodeIds[0] ?? asset?.consumerNodeIds[0]
+      const edgeId = asset?.handoffEdgeIds[0]
+      target = nodeId ? { type: 'node', id: nodeId } : edgeId ? { type: 'edge', id: edgeId } : null
+    } else if (kind === 'guidance') {
+      const asset = assetDoc.processAssets.guidanceItems[id]
+      const nodeId = asset?.appliesToNodeIds[0]
+      const edgeId = asset?.appliesToEdgeIds[0]
+      target = nodeId ? { type: 'node', id: nodeId } : edgeId ? { type: 'edge', id: edgeId } : null
+    } else {
+      const asset = assetDoc.processAssets.milestones[id]
+      target = asset?.stageNodeId ? { type: 'node', id: asset.stageNodeId } : null
+    }
+
+    if (!target) return
+    if (target.type === 'node') {
+      applyCommand({ type: 'SelectNode', payload: { id: target.id, additive: false } })
+      setEditorNodeId(null)
+      setEditorEdgeId(null)
+    } else {
+      applyCommand({ type: 'SelectEdge', payload: { id: target.id, additive: false } })
+      setEditorEdgeId(null)
+      setEditorNodeId(null)
+    }
+  }, [applyCommand, history.present])
+
+  const selectProcessObjectTarget = useCallback((targetType: 'node' | 'edge', targetId: string) => {
+    if (targetType === 'node') {
+      applyCommand({ type: 'SelectNode', payload: { id: targetId, additive: false } })
+      setEditorNodeId(null)
+      setEditorEdgeId(null)
+    } else {
+      applyCommand({ type: 'SelectEdge', payload: { id: targetId, additive: false } })
+      setEditorEdgeId(null)
+      setEditorNodeId(null)
+    }
+  }, [applyCommand])
+
+  const selectDiagnosticTarget = useCallback((targetType: 'node' | 'edge' | 'asset', targetId: string) => {
     if (targetType === 'node') {
       applyCommand({ type: 'SelectNode', payload: { id: targetId, additive: false } })
       setEditorNodeId(targetId)
       setEditorEdgeId(null)
-    } else {
+    } else if (targetType === 'edge') {
       applyCommand({ type: 'SelectEdge', payload: { id: targetId, additive: false } })
       setEditorEdgeId(targetId)
       setEditorNodeId(null)
+    } else if (document.processAssets.workProducts[targetId]) {
+      selectProcessAsset('workProduct', targetId)
+    } else if (document.processAssets.guidanceItems[targetId]) {
+      selectProcessAsset('guidance', targetId)
+    } else if (document.processAssets.milestones[targetId]) {
+      selectProcessAsset('milestone', targetId)
     }
-  }, [applyCommand])
+  }, [applyCommand, document.processAssets, selectProcessAsset])
 
   // Activate the current map as the agreed process. We don't push this
   // through applyCommand because activation is a cross-cutting concern
@@ -739,7 +1164,9 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     nodes,
     edges,
     document,
+    processAssets: document.processAssets,
     selectedNode,
+    selectedAsset,
     selectedNodeIds,
     selectedEdgeIds,
     selectedEdge,
@@ -760,6 +1187,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     selectNodesInRect,
     toggleConnectorMode,
     startConnection,
+    cancelConnection,
     endConnection,
     onNodesChange,
     onEdgesChange,
@@ -768,6 +1196,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     onEdgeClick,
     onPaneClick,
     openEditor,
+    openEdgeEditor,
     closeEditor,
     addActivity,
     addDecision,
@@ -776,6 +1205,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     addStage,
     addBottleneck,
     quickCreate,
+    createConnectedNodeFromPort,
     focus,
     setFocus,
     focusView,
@@ -783,6 +1213,31 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     removeSelected,
     updateNodeData,
     updateEdgeData,
+    assetActions: {
+      addResponsibility: addActivityResponsibility,
+      removeResponsibility: removeActivityResponsibility,
+      createWorkProductForActivity,
+      linkWorkProductToActivity: linkExistingWorkProductToActivity,
+      unlinkWorkProductFromActivity: unlinkExistingWorkProductFromActivity,
+      createGuidanceForActivity,
+      linkGuidanceToActivity: linkExistingGuidanceToActivity,
+      unlinkGuidanceFromActivity: unlinkExistingGuidanceFromActivity,
+      createMilestoneForStage,
+      addMilestoneWorkProductState,
+      createWorkProductForHandoff,
+      linkWorkProductToHandoff: linkExistingWorkProductToHandoff,
+      unlinkWorkProductFromHandoff: unlinkExistingWorkProductFromHandoff,
+      linkGuidanceToWorkProduct: linkExistingGuidanceToWorkProduct,
+      removeMilestoneWorkProductState: removeExistingMilestoneWorkProductState,
+      createAsset: createProcessAsset,
+      updateAsset: updateProcessAsset,
+      linkAsset: linkProcessAsset,
+      unlinkAsset: unlinkProcessAsset,
+      renameAsset: renameProcessAsset,
+      deleteAsset: deleteProcessAsset,
+      selectAsset: selectProcessAsset,
+      selectObjectTarget: selectProcessObjectTarget,
+    },
     moveSelectedNodes,
     undo: undoAction,
     redo: redoAction,

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement, expandDockPanel } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -21,7 +22,7 @@ test.beforeEach(async ({ page }) => {
 test('palette quick-creates a process node on the start map', async ({ page }) => {
   await expect(page.locator(statusBar)).toContainText('1 nodes')
 
-  await page.getByRole('button', { name: /^Activity:/i }).click()
+  await clickPaletteElement(page, 'Activity')
 
   const status = await page.locator(statusBar).textContent()
   expect(status ?? '').toMatch(/2 nodes/)
@@ -31,15 +32,16 @@ test('palette quick-creates a process node on the start map', async ({ page }) =
 })
 
 test('palette bottleneck button adds a semantic node and surfaces diagnostics', async ({ page }) => {
-  await page.getByRole('button', { name: /^Bottleneck:/i }).click()
+  await clickPaletteElement(page, 'Bottleneck')
 
   await expect(page.locator(statusBar)).toContainText('2 nodes')
   await expect(page.getByText('Alignment checklist')).toBeVisible()
 })
 
 test('focus bar exposes decision and bottleneck readability modes', async ({ page }) => {
-  await page.getByRole('button', { name: 'Decisions' }).click()
-  await expect(page.getByRole('button', { name: 'Decisions' })).toHaveClass(/active/)
+  await expandDockPanel(page, 'Focus view')
+  await page.getByRole('button', { name: 'Decision points' }).click()
+  await expect(page.getByRole('button', { name: 'Decision points' })).toHaveClass(/active/)
 
   await page.getByRole('button', { name: 'Bottlenecks' }).click()
   await expect(page.getByRole('button', { name: 'Bottlenecks' })).toHaveClass(/active/)

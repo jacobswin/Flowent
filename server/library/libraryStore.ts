@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
+import { commentSchema } from './commentStore'
 
 // === Schemas ===
 
@@ -8,6 +9,66 @@ import { z } from 'zod'
 // Maps), selection sets are arrays (not Sets). The client converts to/from
 // the runtime GraphDocument type at the boundary.
 const reviewStatusSchema = z.enum(['unclear', 'disputed', 'needs-owner', 'approved', 'changed-since-approval'])
+const responsibilityKindSchema = z.enum(['responsible', 'accountable', 'supporting', 'consulted', 'informed'])
+const guidanceKindSchema = z.enum(['template', 'checklist', 'practice', 'tool', 'training', 'link', 'other'])
+const workProductActivityRelationSchema = z.enum(['input', 'output'])
+
+const activityResponsibilitySchema = z.object({
+  id: z.string(),
+  roleName: z.string(),
+  kind: responsibilityKindSchema,
+})
+
+const workProductActivityLinkSchema = z.object({
+  id: z.string(),
+  nodeId: z.string(),
+  relation: workProductActivityRelationSchema,
+  maturity: z.string(),
+})
+
+const workProductAssetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  state: z.string(),
+  description: z.string(),
+  activityLinks: z.array(workProductActivityLinkSchema).optional(),
+  producerNodeIds: z.array(z.string()),
+  consumerNodeIds: z.array(z.string()),
+  handoffEdgeIds: z.array(z.string()),
+  guidanceIds: z.array(z.string()),
+})
+
+const guidanceAssetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  kind: guidanceKindSchema,
+  description: z.string(),
+  url: z.string(),
+  appliesToNodeIds: z.array(z.string()),
+  appliesToEdgeIds: z.array(z.string()),
+  workProductIds: z.array(z.string()),
+})
+
+const milestoneAssetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  stageNodeId: z.string().nullable(),
+  workProductStates: z.array(z.object({
+    workProductId: z.string(),
+    state: z.string(),
+  })),
+})
+
+const processAssetsSchema = z.object({
+  workProducts: z.record(z.string(), workProductAssetSchema).default({}),
+  guidanceItems: z.record(z.string(), guidanceAssetSchema).default({}),
+  milestones: z.record(z.string(), milestoneAssetSchema).default({}),
+}).default({
+  workProducts: {},
+  guidanceItems: {},
+  milestones: {},
+})
 
 const nodeSchema = z.object({
   id: z.string(),
@@ -30,6 +91,8 @@ const nodeSchema = z.object({
   impact: z.string().optional(),
   suspectedCause: z.string().optional(),
   reviewStatus: reviewStatusSchema.optional(),
+  responsibilities: z.array(activityResponsibilitySchema).optional(),
+  assetSummary: z.any().optional(),
   ports: z.array(z.object({ id: z.string(), side: z.enum(['top', 'right', 'bottom', 'left']) })),
 })
 
@@ -40,6 +103,7 @@ const edgeSchema = z.object({
   targetNodeId: z.string(),
   targetPortId: z.string(),
   label: z.string(),
+  color: z.string().optional(),
   kind: z.literal('handoff').optional(),
   fromRole: z.string().optional(),
   toRole: z.string().optional(),
@@ -47,12 +111,15 @@ const edgeSchema = z.object({
   expectation: z.string().optional(),
   readinessSignal: z.string().optional(),
   reviewStatus: reviewStatusSchema.optional(),
+  workProductIds: z.array(z.string()).optional(),
+  assetSummary: z.any().optional(),
 })
 
 const documentSchema = z.object({
   id: z.string(),
   nodes: z.record(z.string(), nodeSchema),
   edges: z.record(z.string(), edgeSchema),
+  processAssets: processAssetsSchema,
   selectedNodeIds: z.array(z.string()),
   selectedEdgeIds: z.array(z.string()),
   viewport: z.object({ x: z.number(), y: z.number(), zoom: z.number() }),
@@ -85,6 +152,7 @@ export const mapSchema = z.object({
 export const librarySchema = z.object({
   folders: z.array(folderSchema),
   maps: z.array(mapSchema),
+  comments: z.record(z.string(), z.array(commentSchema)).default({}),
 })
 
 export type SavedFolder = z.infer<typeof folderSchema>
@@ -94,7 +162,7 @@ export type SavedLibrary = z.infer<typeof librarySchema>
 // === CRUD ===
 
 export function createEmptyLibrary(): SavedLibrary {
-  return { folders: [], maps: [] }
+  return { folders: [], maps: [], comments: {} }
 }
 
 export function addFolder(lib: SavedLibrary, folder: Omit<SavedFolder, never>): SavedLibrary {

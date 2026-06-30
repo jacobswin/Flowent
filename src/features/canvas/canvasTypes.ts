@@ -7,6 +7,80 @@ export type ReviewStatus = 'unclear' | 'disputed' | 'needs-owner' | 'approved' |
 
 export type PortSide = 'top' | 'right' | 'bottom' | 'left'
 
+export type ResponsibilityKind = 'responsible' | 'accountable' | 'supporting' | 'consulted' | 'informed'
+
+export type ActivityResponsibility = {
+  id: string
+  roleName: string
+  kind: ResponsibilityKind
+}
+
+export type GuidanceKind = 'template' | 'checklist' | 'practice' | 'tool' | 'training' | 'link' | 'other'
+
+export type WorkProductActivityRelation = 'input' | 'output'
+
+export type WorkProductActivityLink = {
+  id: string
+  nodeId: string
+  relation: WorkProductActivityRelation
+  maturity: string
+}
+
+export type WorkProductAsset = {
+  id: string
+  title: string
+  state: string
+  description: string
+  activityLinks?: WorkProductActivityLink[]
+  producerNodeIds: string[]
+  consumerNodeIds: string[]
+  handoffEdgeIds: string[]
+  guidanceIds: string[]
+}
+
+export type GuidanceAsset = {
+  id: string
+  title: string
+  kind: GuidanceKind
+  description: string
+  url: string
+  appliesToNodeIds: string[]
+  appliesToEdgeIds: string[]
+  workProductIds: string[]
+}
+
+export type MilestoneWorkProductState = {
+  workProductId: string
+  state: string
+}
+
+export type MilestoneAsset = {
+  id: string
+  title: string
+  description: string
+  stageNodeId: string | null
+  workProductStates: MilestoneWorkProductState[]
+}
+
+export type ProcessAssets = {
+  workProducts: Record<string, WorkProductAsset>
+  guidanceItems: Record<string, GuidanceAsset>
+  milestones: Record<string, MilestoneAsset>
+}
+
+export type NodeAssetSummary = {
+  responsibleRoles: string[]
+  accountableRoles: string[]
+  inputCount: number
+  outputCount: number
+  guidanceCount: number
+  milestoneCount: number
+}
+
+export type EdgeAssetSummary = {
+  workProductCount: number
+}
+
 export type GraphPort = {
   id: string
   side: PortSide
@@ -35,6 +109,8 @@ export type GraphNode = {
   impact?: string
   suspectedCause?: string
   reviewStatus?: ReviewStatus
+  responsibilities?: ActivityResponsibility[]
+  assetSummary?: NodeAssetSummary
   ports: GraphPort[]
 }
 
@@ -45,6 +121,7 @@ export type GraphEdge = {
   targetNodeId: string
   targetPortId: string
   label: string
+  color?: string
   kind?: 'handoff'
   fromRole?: string
   toRole?: string
@@ -52,6 +129,8 @@ export type GraphEdge = {
   expectation?: string
   readinessSignal?: string
   reviewStatus?: ReviewStatus
+  workProductIds?: string[]
+  assetSummary?: EdgeAssetSummary
 }
 
 export type GraphViewport = {
@@ -60,10 +139,18 @@ export type GraphViewport = {
   zoom: number
 }
 
+export type ConnectionCreateRequest = {
+  sourceNodeId: string
+  sourcePortId: string
+  worldPosition: { x: number; y: number }
+  screenPosition: { x: number; y: number }
+}
+
 export type GraphDocument = {
   id: string
   nodes: Map<string, GraphNode>
   edges: Map<string, GraphEdge>
+  processAssets: ProcessAssets
   selectedNodeIds: Set<string>
   selectedEdgeIds: Set<string>
   viewport: GraphViewport
@@ -88,6 +175,7 @@ export type GraphCommand =
             | 'criteria'
             | 'decisionOutcomes'
             | 'roleTags'
+            | 'responsibilities'
             | 'expectations'
             | 'owner'
             | 'goal'
@@ -110,13 +198,19 @@ export type GraphCommand =
         patch: Partial<
           Pick<
             GraphEdge,
+            | 'sourceNodeId'
+            | 'sourcePortId'
+            | 'targetNodeId'
+            | 'targetPortId'
             | 'label'
+            | 'color'
             | 'fromRole'
             | 'toRole'
             | 'artifact'
             | 'expectation'
             | 'readinessSignal'
             | 'reviewStatus'
+            | 'workProductIds'
           >
         >
       }
@@ -142,7 +236,9 @@ export type ActivityNodeData = {
   title: string
   summary: string
   roleIds: string[]
+  responsibilities?: ActivityResponsibility[]
   expectations?: string
+  assetSummary?: NodeAssetSummary
   kind: 'activity'
 }
 
@@ -160,6 +256,7 @@ export type StageNodeData = {
   entryCondition: string
   exitCondition: string
   owner: string
+  assetSummary?: NodeAssetSummary
   kind: 'stage'
 }
 
@@ -195,11 +292,14 @@ export type ProcessEdge = {
   targetHandle?: string
   data?: {
     label?: string
+    color?: string
     fromRole?: string
     toRole?: string
     artifact?: string
     expectation?: string
     readinessSignal?: string
     reviewStatus?: ReviewStatus
+    workProductIds?: string[]
+    assetSummary?: EdgeAssetSummary
   }
 }

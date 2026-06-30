@@ -1,12 +1,55 @@
 import type { GraphCommand, GraphDocument } from '../canvasTypes'
 import { addEdge, addNode } from './graphDocument'
 
+function edgeEndpointsAreValid(doc: GraphDocument, edge: {
+  sourceNodeId: string
+  sourcePortId: string
+  targetNodeId: string
+  targetPortId: string
+}): boolean {
+  if (edge.sourceNodeId === edge.targetNodeId) return false
+
+  const source = doc.nodes.get(edge.sourceNodeId)
+  const target = doc.nodes.get(edge.targetNodeId)
+  if (!source || !target) return false
+
+  return (
+    source.ports.some((port) => port.id === edge.sourcePortId) &&
+    target.ports.some((port) => port.id === edge.targetPortId)
+  )
+}
+
+function edgeAlreadyExists(doc: GraphDocument, edge: {
+  sourceNodeId: string
+  sourcePortId: string
+  targetNodeId: string
+  targetPortId: string
+}): boolean {
+  for (const existing of doc.edges.values()) {
+    if (
+      existing.sourceNodeId === edge.sourceNodeId &&
+      existing.sourcePortId === edge.sourcePortId &&
+      existing.targetNodeId === edge.targetNodeId &&
+      existing.targetPortId === edge.targetPortId
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocument {
   switch (command.type) {
     case 'AddNode': {
       return addNode(doc, command.payload)
     }
     case 'AddEdge': {
+      if (!edgeEndpointsAreValid(doc, command.payload)) {
+        return doc
+      }
+      if (edgeAlreadyExists(doc, command.payload)) {
+        return doc
+      }
       return addEdge(doc, command.payload)
     }
     case 'UpdateNode': {
@@ -46,6 +89,7 @@ export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocu
       return {
         ...doc,
         selectedNodeIds,
+        selectedEdgeIds: new Set(),
         meta: {
           dirty: true,
           version: doc.meta.version + 1,
@@ -90,10 +134,15 @@ export function runCommand(doc: GraphDocument, command: GraphCommand): GraphDocu
       }
 
       const edges = new Map(doc.edges)
-      edges.set(edge.id, {
+      const nextEdge = {
         ...edge,
         ...command.payload.patch,
-      })
+      }
+      if (!edgeEndpointsAreValid(doc, nextEdge)) {
+        return doc
+      }
+
+      edges.set(edge.id, nextEdge)
 
       return {
         ...doc,

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { useCanvasState, migrateDecisionPorts } from './useCanvasState'
 import { createEmptyDocument } from './engine/graphDocument'
 import type { GraphDocument, GraphNode } from './canvasTypes'
+import { getPortPosition } from './render/drawEdges'
 
 describe('useCanvasState', () => {
   it('adds activity node from toolbar action', () => {
@@ -117,7 +118,7 @@ describe('useCanvasState', () => {
     expect(edge?.targetHandle).toBe('in')
   })
 
-  it('selects an edge and exposes it in the editor state', () => {
+  it('selects an edge without opening the editor until explicitly requested', () => {
     const { result } = renderHook(() => useCanvasState())
 
     act(() => result.current.addActivity({ x: 100, y: 100 }))
@@ -139,7 +140,92 @@ describe('useCanvasState', () => {
 
     expect(result.current.selectedNodeIds.size).toBe(0)
     expect(result.current.selectedEdgeIds.size).toBe(1)
+    expect(result.current.selectedEdge?.id).toBe(edge.id)
+    expect(result.current.editorEdge).toBeNull()
+
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
+
     expect(result.current.editorEdge?.id).toBe(edge.id)
+  })
+
+  it('closes the edge editor when shift-clicking an already-selected edge to deselect', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    // Shift-click on the already-selected edge to deselect.
+    act(() => {
+      result.current.onEdgeClick(edge.id, true)
+    })
+
+    expect(result.current.selectedEdgeIds.size).toBe(0)
+    expect(result.current.editorEdge).toBeNull()
+  })
+
+  it('clears the selected edge and edge editor when selecting a node', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    act(() => {
+      result.current.openEdgeEditor(edge.id)
+    })
+    expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    act(() => {
+      result.current.onNodeClick(source.id, false)
+    })
+
+    expect(result.current.selectedNodeIds.has(source.id)).toBe(true)
+    expect(result.current.selectedEdgeIds.size).toBe(0)
+    expect(result.current.editorEdge).toBeNull()
+  })
+
+  it('closes the editor when the selected edge is deleted', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const source = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const target = result.current.nodes.find((n) => n.data.kind === 'decision')!
+    act(() => result.current.onConnect(source.id, target.id, 'out', 'in'))
+    const edge = result.current.edges[0]!
+    act(() => result.current.onEdgeClick(edge.id, false))
+    act(() => result.current.openEdgeEditor(edge.id))
+    expect(result.current.editorEdge?.id).toBe(edge.id)
+
+    act(() => {
+      result.current.removeSelected()
+    })
+
+    expect(result.current.editorEdge).toBeNull()
   })
 
   it('updates edge label data by id', () => {
@@ -162,6 +248,40 @@ describe('useCanvasState', () => {
     })
 
     expect(result.current.edges[0]?.data?.label).toBe('PM handoff')
+  })
+
+  it('reroutes a selected edge to a different target node', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 100, y: 100 }))
+    act(() => result.current.addDecision({ x: 420, y: 100 }))
+
+    const activity = result.current.nodes.find((n) => n.data.kind === 'activity')!
+    const decision = result.current.nodes.find((n) => n.data.kind === 'decision')!
+
+    act(() => {
+      result.current.onConnect('start', activity.id, 'out', 'in')
+    })
+
+    const edge = result.current.edges[0]
+    act(() => {
+      result.current.onEdgeClick(edge.id, false)
+    })
+    act(() => {
+      result.current.updateEdgeData(edge.id, {
+        targetNodeId: decision.id,
+        targetPortId: 'in',
+      })
+    })
+
+    expect(result.current.edges[0]).toMatchObject({
+      id: edge.id,
+      source: 'start',
+      target: decision.id,
+      sourceHandle: 'out',
+      targetHandle: 'in',
+    })
+    expect(result.current.selectedEdge?.target).toBe(decision.id)
   })
 
   it('keeps the world point under the cursor anchored when zooming', () => {
@@ -245,6 +365,27 @@ describe('useCanvasState', () => {
     expect(result.current.edges[0]).toMatchObject({ source: 'start', type: 'handoff' })
   })
 
+  it('creates a selected node connected from a specific source port at a drop point', () => {
+    const { result } = renderHook(() => useCanvasState())
+    const dropPoint = { x: 640, y: 260 }
+
+    act(() => {
+      result.current.createConnectedNodeFromPort('start', 'out', 'decision', dropPoint)
+    })
+
+    const created = Array.from(result.current.document.nodes.values()).find((node) => node.type === 'decision')
+    expect(created).toBeTruthy()
+    expect(getPortPosition(created!, 'in')).toEqual(dropPoint)
+    expect(result.current.edges).toHaveLength(1)
+    expect(result.current.edges[0]).toMatchObject({
+      source: 'start',
+      sourceHandle: 'out',
+      target: created!.id,
+      targetHandle: 'in',
+    })
+    expect(result.current.selectedNodeIds.has(created!.id)).toBe(true)
+  })
+
   it('adds stage and bottleneck nodes from typed canvas actions', () => {
     const { result } = renderHook(() => useCanvasState())
 
@@ -266,6 +407,91 @@ describe('useCanvasState', () => {
     act(() => result.current.updateEdgeData(edge.id, { expectation: 'Context moves with the work.' }))
 
     expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
-    expect(result.current.editorEdge?.data?.expectation).toBe('Context moves with the work.')
+    expect(result.current.selectedEdge?.data?.expectation).toBe('Context moves with the work.')
+  })
+
+  it('updates, links, unlinks, and deletes process assets through asset actions', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 120, y: 160 }))
+    const activity = result.current.nodes.find((node) => node.data.kind === 'activity')!
+    act(() => result.current.addDecision({ x: 420, y: 160 }))
+    const decision = result.current.nodes.find((node) => node.data.kind === 'decision')!
+    act(() => result.current.onConnect(activity.id, decision.id, 'out', 'in'))
+    const edge = result.current.edges[0]
+
+    act(() => result.current.assetActions.createWorkProductForActivity(activity.id, 'output', 'Research brief'))
+    const workProductId = Object.keys(result.current.processAssets.workProducts)[0]
+    act(() => result.current.assetActions.createGuidanceForActivity(activity.id, { title: 'Interview checklist', kind: 'checklist' }))
+    const guidanceId = Object.keys(result.current.processAssets.guidanceItems)[0]
+
+    act(() => result.current.assetActions.updateAsset('workProduct', workProductId, {
+      state: 'Approved',
+      description: 'Ready for delivery',
+    }))
+    act(() => result.current.assetActions.linkAsset('workProduct', workProductId, 'handoff', edge.id))
+    act(() => result.current.assetActions.linkAsset('guidance', guidanceId, 'workProduct', workProductId))
+
+    expect(result.current.processAssets.workProducts[workProductId]).toMatchObject({
+      state: 'Approved',
+      description: 'Ready for delivery',
+      handoffEdgeIds: [edge.id],
+      guidanceIds: [guidanceId],
+    })
+    expect(result.current.processAssets.guidanceItems[guidanceId]?.workProductIds).toEqual([workProductId])
+
+    act(() => result.current.assetActions.unlinkAsset('guidance', guidanceId, 'workProduct', workProductId))
+    expect(result.current.processAssets.workProducts[workProductId]?.guidanceIds).toEqual([])
+
+    act(() => result.current.assetActions.selectAsset('workProduct', workProductId))
+    expect(result.current.selectedAsset).toEqual({ kind: 'workProduct', id: workProductId })
+    expect(result.current.selectedNodeIds.has(activity.id)).toBe(true)
+
+    act(() => result.current.assetActions.deleteAsset('workProduct', workProductId))
+    expect(result.current.processAssets.workProducts[workProductId]).toBeUndefined()
+    expect(result.current.edges[0]?.data?.workProductIds ?? []).toEqual([])
+  })
+
+  it('creates standalone process assets and selects the created asset', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.assetActions.createAsset('workProduct', { title: ' Opportunity brief ' }))
+    const workProduct = Object.values(result.current.processAssets.workProducts)[0]
+    expect(workProduct).toMatchObject({
+      title: 'Opportunity brief',
+      state: 'Draft',
+      description: '',
+      producerNodeIds: [],
+      consumerNodeIds: [],
+      handoffEdgeIds: [],
+      guidanceIds: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'workProduct', id: workProduct.id })
+
+    act(() => result.current.assetActions.createAsset('guidance', { title: 'Delivery template', kind: 'template' }))
+    const guidance = Object.values(result.current.processAssets.guidanceItems)[0]
+    expect(guidance).toMatchObject({
+      title: 'Delivery template',
+      kind: 'template',
+      description: '',
+      url: '',
+      appliesToNodeIds: [],
+      appliesToEdgeIds: [],
+      workProductIds: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'guidance', id: guidance.id })
+
+    act(() => result.current.assetActions.createAsset('milestone', { title: 'Release readiness' }))
+    const milestone = Object.values(result.current.processAssets.milestones)[0]
+    expect(milestone).toMatchObject({
+      title: 'Release readiness',
+      description: '',
+      stageNodeId: null,
+      workProductStates: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'milestone', id: milestone.id })
+
+    act(() => result.current.assetActions.createAsset('workProduct', { title: '   ' }))
+    expect(Object.keys(result.current.processAssets.workProducts)).toHaveLength(1)
   })
 })

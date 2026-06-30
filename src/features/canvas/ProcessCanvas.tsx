@@ -1,23 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
-import type { FederatedPointerEvent } from 'pixi.js'
-import { Graphics } from 'pixi.js'
-import type { ProcessNode } from './canvasTypes'
-import { Toolbar } from './Toolbar'
-import { PropertiesPanel } from './PropertiesPanel'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
+import { CanvasChrome } from './CanvasChrome'
+import type { ConnectionCreateRequest } from './canvasTypes'
 import { useCanvasState } from './useCanvasState'
+import { useCanvasGraphModel } from './useCanvasGraphModel'
 import { useEdgeLabelEditor } from './useEdgeLabelEditor'
-import { createPixiStage } from './render/pixiStage'
-import { createCanvasLayers, drawGrid } from './render/layers'
-import { drawNodes } from './render/drawNodes'
-import { drawEdges } from './render/drawEdges'
-import { findNearestTargetPort } from './routing/ports'
+import { useCanvasStageLifecycle } from './useCanvasStageLifecycle'
 import { mapKeyToAction } from './engine/keyboard'
-import { hasDraggedProcessElement, readDraggedProcessElement, ProcessElementPalette } from './ProcessElementPalette'
-import { FocusBar } from './FocusBar'
-import { AlignmentChecklist } from './AlignmentChecklist'
-import { ActivationBar } from './ActivationBar'
+import { hasDraggedProcessElement, readDraggedProcessElement } from './ProcessElementPalette'
 import { exportProcessMapAsSvg, downloadBlob } from './export/processMapExporter'
+import type { ProcessElementType } from './processElements'
+import { buildQuickConnectorCreateRequest } from './routing/quickConnector'
+
+type EdgeContextMenuRequest = {
+  edgeId: string
+  screenPosition: { x: number; y: number }
+}
+
+function isEditingText(event: KeyboardEvent): boolean {
+  const target = event.target
+  if (!(target instanceof Element)) return false
+
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true
+  }
+
+  if (target.closest('[contenteditable="true"], [role="textbox"]')) {
+    return true
+  }
+
+  return false
+}
 
 export function ProcessCanvas(props: { mapId?: string; initialDocument?: import('./canvasTypes').GraphDocument; onAutosave?: (doc: import('./canvasTypes').GraphDocument) => void } = {}) {
   if (props.mapId || props.initialDocument || props.onAutosave) {
@@ -25,8 +38,28 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     // so LibraryGate can pass them through without a type error. The plan
     // flags full LibraryGate integration as out of scope for the foundation.
   }
-  const canvas = useCanvasState()
+  // Use the prop-derived onAutosave (if any) so the canvas state
+  // can flush its debounced save back up to the LibraryGate. The
+  // canvas state hook fires the callback 500ms after the last edit;
+  // LibraryGate uses it to PATCH the document to the server. If
+  // this prop is omitted (e.g. for ad-hoc canvases that don't
+  // round-trip through the library), the canvas simply runs
+  // without autosave — there's no warning because not every
+  // canvas consumer wants persistence.
+  const canvas = useCanvasState({ initialDocument: props.initialDocument, onAutosave: props.onAutosave })
   const hostRef = useRef<HTMLDivElement | null>(null)
+  // Keep a ref pointing to the latest canvas state so async-init closures
+  // (Pixi stage, test hooks) can read fresh data, not the snapshot
+  // captured when the async stage init first resolved. The .current
+  // is updated in a useEffect (not during render) to satisfy React 19
+  // strict refs rules; the listener ref reads on the next tick are
+  // always one render behind, which is fine because the listeners
+  // themselves don't depend on same-tick canvas writes.
+  const canvasRef = useRef(canvas)
+  useEffect(() => {
+    canvasRef.current = canvas
+  }, [canvas])
+
 
   // On-canvas inline label editor. The editor opens when the user
   // double-taps a label and closes on commit/cancel. The input is keyed
@@ -37,7 +70,93 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       canvas.updateEdgeData(edgeId, { label: value })
     }, [canvas]),
   )
-  const [labelDraft, setLabelDraft] = useState('')
+  // Keep a stable ref to the latest label editor so the Pixi stage
+  // (which mounts once) can call `openAt` on the current instance
+  // without re-running its mount effect. Synced via useEffect to
+  // satisfy React 19's strict refs-during-render rules.
+  const labelEditorRef = useRef(labelEditor)
+  useEffect(() => {
+    labelEditorRef.current = labelEditor
+  }, [labelEditor])
+  // The label editor positions itself relative to the .pixi-host's
+  // bounding rect. We read that rect in an effect (not during render)
+  // and cache the values so the inline IIFE below can read them safely.
+  // We also keep the cache fresh on resize / scroll so a window
+  // resize or layout shift doesn't strand the editor in the wrong
+  // spot while it's open.
+  const [hostOrigin, setHostOrigin] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
+  const [connectionCreateMenu, setConnectionCreateMenu] = useState<ConnectionCreateRequest | null>(null)
+  const [edgeContextMenu, setEdgeContextMenu] = useState<EdgeContextMenuRequest | null>(null)
+  const openConnectionCreateMenu = useCallback((request: ConnectionCreateRequest) => {
+    setEdgeContextMenu(null)
+    setConnectionCreateMenu(request)
+  }, [])
+  const openConnectionCreateMenuRef = useRef(openConnectionCreateMenu)
+  useEffect(() => {
+    openConnectionCreateMenuRef.current = openConnectionCreateMenu
+  }, [openConnectionCreateMenu])
+
+  const openEdgeContextMenu = useCallback((edgeId: string, point: { screenX: number; screenY: number }) => {
+    canvas.onEdgeClick(edgeId, false)
+    setConnectionCreateMenu(null)
+    setEdgeContextMenu({
+      edgeId,
+      screenPosition: { x: point.screenX, y: point.screenY },
+    })
+  }, [canvas])
+  const openEdgeContextMenuRef = useRef(openEdgeContextMenu)
+  useEffect(() => {
+    openEdgeContextMenuRef.current = openEdgeContextMenu
+  }, [openEdgeContextMenu])
+
+  const handleOpenEdgeContextMenu = useCallback((edgeId: string, screenPosition: { x: number; y: number }) => {
+    openEdgeContextMenu(edgeId, { screenX: screenPosition.x, screenY: screenPosition.y })
+  }, [openEdgeContextMenu])
+
+  const handleCloseEdgeContextMenu = useCallback(() => {
+    setEdgeContextMenu(null)
+  }, [])
+
+  const handleUpdateEdgeColor = useCallback((edgeId: string, color: string) => {
+    canvas.updateEdgeData(edgeId, { color })
+  }, [canvas])
+
+  const handlePickConnectionNodeType = useCallback((type: ProcessElementType) => {
+    if (!connectionCreateMenu) return
+    canvas.createConnectedNodeFromPort(
+      connectionCreateMenu.sourceNodeId,
+      connectionCreateMenu.sourcePortId,
+      type,
+      connectionCreateMenu.worldPosition,
+    )
+    setConnectionCreateMenu(null)
+  }, [canvas, connectionCreateMenu])
+
+  const handleCancelConnectionCreate = useCallback(() => {
+    setConnectionCreateMenu(null)
+    canvas.cancelConnection()
+  }, [canvas])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const host = hostRef.current
+    if (!host) return
+    const sync = () => {
+      const rect = host.getBoundingClientRect()
+      setHostOrigin({ left: rect.left, top: rect.top })
+    }
+    sync()
+    const ResizeObserverCtor = typeof ResizeObserver !== 'undefined' ? ResizeObserver : null
+    const observer = ResizeObserverCtor ? new ResizeObserverCtor(sync) : null
+    if (observer) observer.observe(host)
+    window.addEventListener('scroll', sync, { passive: true })
+    window.addEventListener('resize', sync, { passive: true })
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('scroll', sync)
+      window.removeEventListener('resize', sync)
+    }
+  }, [])
 
 
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -65,6 +184,40 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditingText(event)) return
+
+      if (
+        (event.key === 'Delete' || event.key === 'Backspace') &&
+        (canvas.selectedNodeIds.size > 0 || canvas.selectedEdgeIds.size > 0)
+      ) {
+        event.preventDefault()
+        setConnectionCreateMenu(null)
+        setEdgeContextMenu(null)
+        canvas.removeSelected()
+        return
+      }
+
+      if (
+        event.key === 'Tab' &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        const selectedNodeIds = Array.from(canvas.document.selectedNodeIds)
+        if (selectedNodeIds.length === 1) {
+          const selectedNode = canvas.document.nodes.get(selectedNodeIds[0])
+          const request = selectedNode
+            ? buildQuickConnectorCreateRequest(selectedNode, canvas.viewport)
+            : null
+          if (request) {
+            event.preventDefault()
+            openConnectionCreateMenu(request)
+            return
+          }
+        }
+      }
+
       const action = mapKeyToAction({
         key: event.key,
         metaKey: event.metaKey,
@@ -99,9 +252,6 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         case 'redo':
           canvas.redo()
           break
-        case 'delete':
-          canvas.removeSelected()
-          break
         case 'zoom-in':
           canvas.zoomIn()
           break
@@ -113,7 +263,7 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
           break
       }
     },
-    [canvas],
+    [canvas, openConnectionCreateMenu],
   )
 
   useEffect(() => {
@@ -121,557 +271,145 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
-  const graphNodes = useMemo(
-    () => canvas.nodes.map(toGraphNode),
-    [canvas.nodes],
-  )
+  const { graphNodes, graphEdges, nodesById } = useCanvasGraphModel({
+    nodes: canvas.nodes,
+    edges: canvas.edges,
+  })
 
-  const graphEdges = useMemo(
-    () =>
-      canvas.edges
-        .filter((e) => e.source && e.target)
-        .map((e) => ({
-          id: e.id,
-          sourceNodeId: e.source,
-          sourcePortId: e.sourceHandle ?? 'out',
-          targetNodeId: e.target,
-          targetPortId: e.targetHandle ?? 'in',
-          label: e.data?.label ?? '',
-        })),
-    [canvas.edges],
-  )
-
-  const nodesById = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof toGraphNode>>()
-    for (const node of graphNodes) {
-      map.set(node.id, node)
-    }
-    return map
-  }, [graphNodes])
-
+  // Refs for derived graph data that the long-lived Pixi helpers read.
+  // Keep the derivation in `useCanvasGraphModel`, but keep the imperative
+  // ref-sync adapter local to this Pixi container so the exported hook API
+  // stays purely declarative.
+  const graphEdgesRef = useRef(graphEdges)
+  const graphNodesRef = useRef(graphNodes)
+  const nodesByIdRef = useRef(nodesById)
   useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
+    graphEdgesRef.current = graphEdges
+  }, [graphEdges])
+  useEffect(() => {
+    graphNodesRef.current = graphNodes
+  }, [graphNodes])
+  useEffect(() => {
+    nodesByIdRef.current = nodesById
+  }, [nodesById])
 
-    let disposed = false
-    let destroy: (() => void) | null = null
+  // Mount the long-lived Pixi stage plus its sibling native/Pixi
+  // helpers once. The lifecycle hook owns only the imperative stage
+  // orchestration; this component keeps ownership of the latest canvas
+  // state refs and the derived graph refs that the helpers read.
+  useCanvasStageLifecycle({
+    hostRef,
+    canvasRef,
+    graphNodesRef,
+    graphEdgesRef,
+    nodesByIdRef,
+    labelEditorRef,
+    openConnectionCreateMenuRef,
+    openEdgeContextMenuRef,
+  })
 
-    const run = async () => {
-      const stage = await createPixiStage(host)
-      if (disposed) {
-        stage.destroy()
-        return
-      }
+  const handleExport = useCallback(() => {
+    // Export the current canvas document. The exporter walks the
+    // Pixi-independent GraphDocument and returns a self-contained
+    // SVG. The download is browser-only.
+    const svg = exportProcessMapAsSvg(canvas.document)
+    if (typeof document === 'undefined') return
+    const filename = `flowent-process-map-${Date.now()}.svg`
+    downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), filename)
+  }, [canvas.document])
 
-      destroy = stage.destroy
-
-      const layers = createCanvasLayers(stage.root)
-
-      let lastClickTime = 0
-      let lastClickNodeId: string | null = null
-      let isMarqueeDragging = false
-      let marqueeStartX = 0
-      let marqueeStartY = 0
-
-      // Marquee rectangle graphics
-      const marqueeRect = new Graphics()
-      marqueeRect.visible = false
-      layers.overlayLayer.addChild(marqueeRect)
-
-      // Handle marquee on canvas background
-      const hitArea = new Graphics()
-      hitArea.rect(0, 0, host.clientWidth, host.clientHeight)
-      hitArea.fill({ color: 0x000000, alpha: 0.001 }) // Nearly invisible hit area
-      hitArea.eventMode = 'static'
-      hitArea.cursor = 'default'
-      layers.overlayLayer.addChild(hitArea)
-
-      let isPanning = false
-      let panStartX = 0
-      let panStartY = 0
-      let spaceDown = false
-
-      window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' && !e.repeat) {
-          spaceDown = true
-          hitArea.cursor = 'grab'
-        }
-      })
-
-      window.addEventListener('keyup', (e) => {
-        if (e.code === 'Space') {
-          spaceDown = false
-          hitArea.cursor = 'default'
-        }
-      })
-
-      hitArea.on('pointerdown', (event: FederatedPointerEvent) => {
-        if (spaceDown) {
-          isPanning = true
-          panStartX = event.globalX
-          panStartY = event.globalY
-          hitArea.cursor = 'grabbing'
-          return
-        }
-
-        isMarqueeDragging = true
-        marqueeStartX = event.globalX
-        marqueeStartY = event.globalY
-        marqueeRect.visible = true
-        canvas.onPaneClick()
-      })
-
-      hitArea.on('globalpointermove', (event: FederatedPointerEvent) => {
-        if (isPanning) {
-          const dx = event.globalX - panStartX
-          const dy = event.globalY - panStartY
-          canvas.panBy(dx, dy)
-          panStartX = event.globalX
-          panStartY = event.globalY
-          return
-        }
-
-        if (!isMarqueeDragging) return
-
-        const x1 = Math.min(marqueeStartX, event.globalX)
-        const y1 = Math.min(marqueeStartY, event.globalY)
-        const x2 = Math.max(marqueeStartX, event.globalX)
-        const y2 = Math.max(marqueeStartY, event.globalY)
-
-        marqueeRect.clear()
-        marqueeRect.rect(x1, y1, x2 - x1, y2 - y1)
-        marqueeRect.fill({ color: 0x0071e3, alpha: 0.1 })
-        marqueeRect.stroke({ color: 0x0071e3, alpha: 0.4, width: 1 })
-      })
-
-      hitArea.on('pointerup', (event: FederatedPointerEvent) => {
-        if (isPanning) {
-          isPanning = false
-          hitArea.cursor = spaceDown ? 'grab' : 'default'
-          return
-        }
-
-        if (!isMarqueeDragging) return
-        isMarqueeDragging = false
-        marqueeRect.visible = false
-
-        const x1 = Math.min(marqueeStartX, event.globalX)
-        const y1 = Math.min(marqueeStartY, event.globalY)
-        const x2 = Math.max(marqueeStartX, event.globalX)
-        const y2 = Math.max(marqueeStartY, event.globalY)
-
-        // Only marquee if dragged more than 5px
-        if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) return
-
-        // Select nodes within marquee
-        canvas.selectNodesInRect(x1, y1, x2, y2)
-      })
-
-      hitArea.on('pointerupoutside', () => {
-        isPanning = false
-        isMarqueeDragging = false
-        marqueeRect.visible = false
-      })
-
-      const redraw = () => {
-        const width = host.clientWidth
-        const height = host.clientHeight
-
-        // Apply viewport transform
-        stage.root.x = canvas.viewport.x
-        stage.root.y = canvas.viewport.y
-        stage.root.scale.set(canvas.viewport.zoom)
-
-        // Update hit area size
-        hitArea.clear()
-        hitArea.rect(0, 0, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
-        hitArea.fill({ color: 0x000000, alpha: 0.001 })
-
-        drawGrid(layers.gridLayer, width / canvas.viewport.zoom, height / canvas.viewport.zoom)
-        drawEdges(layers.edgeLayer, graphEdges, nodesById, {
-          selectedEdgeIds: canvas.selectedEdgeIds,
-          dimmedEdgeIds: canvas.focusView.dimmedEdgeIds,
-          onEdgeClick: (edgeId, event) => {
-            canvas.onEdgeClick(edgeId, event.shiftKey || event.ctrlKey || event.metaKey)
-          },
-          onOpenLabelEditor: (edgeId, anchor) => {
-            labelEditor.openAt(edgeId, anchor)
-          },
-        })
-        drawNodes(layers.nodeLayer, graphNodes, canvas.selectedNodeIds, {
-          dimmedNodeIds: canvas.focusView.dimmedNodeIds,
-        })
-
-        // Attach events to nodes and ports
-        for (const child of layers.nodeLayer.children) {
-          const label = (child as { label?: string }).label
-          if (!label) continue
-
-          // Remove existing listeners to avoid duplicates
-          child.removeAllListeners()
-
-          // Check if this is a port
-          if (label.startsWith('port:')) {
-            let portDragging = false
-            let portStartX = 0
-            let portStartY = 0
-            let sourceNodeId = ''
-            const sourcePortId = label.replace('port:', '')
-
-            // Find parent node
-            const parent = child.parent
-            if (parent && 'label' in parent) {
-              sourceNodeId = (parent as { label: string }).label
-            }
-
-            child.on('pointerdown', (event: FederatedPointerEvent) => {
-              portDragging = true
-              portStartX = event.globalX
-              portStartY = event.globalY
-
-              // Start connection in connector mode
-              if (canvas.connectorMode) {
-                canvas.startConnection(sourceNodeId, sourcePortId)
-              }
-            })
-
-            child.on('globalpointermove', (event: FederatedPointerEvent) => {
-              if (!portDragging) return
-
-              // Draw temporary connection line
-              layers.overlayLayer.children.forEach((c) => {
-                if ((c as { label?: string }).label === 'temp-connection') {
-                  layers.overlayLayer.removeChild(c)
-                }
-              })
-
-              const tempLine = new Graphics()
-              tempLine.label = 'temp-connection'
-              tempLine.stroke({ color: 0x0071e3, width: 2, alpha: 0.6 })
-              tempLine.moveTo(portStartX, portStartY)
-              tempLine.lineTo(event.globalX, event.globalY)
-              layers.overlayLayer.addChild(tempLine)
-            })
-
-            child.on('pointerup', (event: FederatedPointerEvent) => {
-              if (!portDragging) return
-              portDragging = false
-
-              // Remove temporary line
-              layers.overlayLayer.children.forEach((c) => {
-                if ((c as { label?: string }).label === 'temp-connection') {
-                  layers.overlayLayer.removeChild(c)
-                }
-              })
-
-              // Find target node under cursor
-              const targetNode = findNodeAtPosition(
-                event.globalX,
-                event.globalY,
-                graphNodes,
-                sourceNodeId,
-                canvas.viewport,
-              )
-
-              if (targetNode) {
-                const worldX = (event.globalX - canvas.viewport.x) / canvas.viewport.zoom
-                const worldY = (event.globalY - canvas.viewport.y) / canvas.viewport.zoom
-                const targetPort = findNearestTargetPort(targetNode, { x: worldX, y: worldY })
-                const targetPortId = targetPort?.id ?? 'in'
-                canvas.onConnect(sourceNodeId, targetNode.id, sourcePortId, targetPortId)
-              } else if (canvas.connectorMode && canvas.connectionStart) {
-                canvas.endConnection(sourceNodeId, 'in')
-              }
-            })
-
-            child.on('pointerupoutside', () => {
-              portDragging = false
-              layers.overlayLayer.children.forEach((c) => {
-                if ((c as { label?: string }).label === 'temp-connection') {
-                  layers.overlayLayer.removeChild(c)
-                }
-              })
-            })
-
-            continue
-          }
-
-          // Node event handling
-          child.on('pointertap', (event: FederatedPointerEvent) => {
-            const now = Date.now()
-            const timeSinceLastClick = now - lastClickTime
-            const isSameNode = lastClickNodeId === label
-
-            if (timeSinceLastClick < 300 && isSameNode) {
-              // Double click - open editor
-              canvas.openEditor(label)
-            } else {
-              // Single click - select
-              const additive = event.shiftKey || event.ctrlKey || event.metaKey
-              canvas.onNodeClick(label, additive)
-            }
-
-            lastClickTime = now
-            lastClickNodeId = label
-          })
-
-          // Drag support for node
-          let dragging = false
-          let startX = 0
-          let startY = 0
-
-          child.on('pointerdown', (event: FederatedPointerEvent) => {
-            dragging = true
-            startX = event.globalX
-            startY = event.globalY
-          })
-
-          child.on('globalpointermove', (event: FederatedPointerEvent) => {
-            if (!dragging) return
-
-            const dx = event.globalX - startX
-            const dy = event.globalY - startY
-
-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-              canvas.moveSelectedNodes(dx, dy)
-              startX = event.globalX
-              startY = event.globalY
-            }
-          })
-
-          child.on('pointerup', () => {
-            dragging = false
-          })
-
-          child.on('pointerupoutside', () => {
-            dragging = false
-          })
-        }
-      }
-
-      redraw()
-
-      const ticker = () => redraw()
-      stage.app.ticker.add(ticker)
-
-      destroy = () => {
-        stage.app.ticker.remove(ticker)
-        stage.destroy()
-      }
-    }
-
-    run().catch(() => {
-      // no-op: drawing failures should not crash the app shell
-    })
-
-    return () => {
-      disposed = true
-      destroy?.()
-    }
-  }, [
-    canvas,
-    graphEdges,
-    graphNodes,
-    nodesById,
-  ])
+  const selectionCount = canvas.selectedNodeIds.size + canvas.selectedEdgeIds.size
+  const hasSelection = selectionCount > 0
 
   return (
-    <div className="canvas-container">
-      <div className="canvas-header">
-        <h1 className="canvas-title">Flowent</h1>
-        <p className="canvas-subtitle">Process maps for aligned product teams</p>
-      </div>
-
-      <Toolbar
-        onToggleConnector={canvas.toggleConnectorMode}
-        onRemove={canvas.removeSelected}
-        onAutoLayout={() => canvas.autoLayout()}
-        onUndo={canvas.undo}
-        onRedo={canvas.redo}
-        onExport={() => {
-          // Export the current canvas document. The exporter walks the
-          // Pixi-independent GraphDocument and returns a self-contained
-          // SVG. The download is browser-only.
-          const svg = exportProcessMapAsSvg(canvas.document)
-          if (typeof document === 'undefined') return
-          const filename = `flowent-process-map-${Date.now()}.svg`
-          downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), filename)
-        }}
-        canUndo={canvas.canUndo}
-        canRedo={canvas.canRedo}
-        hasSelection={canvas.selectedNodeIds.size > 0}
-        connectorMode={canvas.connectorMode}
-      />
-
-      <ProcessElementPalette onQuickCreate={canvas.quickCreate} />
-
-      <div
-        ref={hostRef}
-        className="pixi-host"
-        aria-label="Process canvas"
-        tabIndex={0}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      />
-
-      {labelEditor.openEdgeId && labelEditor.anchor && (() => {
-        // Convert the label's world anchor to viewport-relative screen
-        // coords inside the .pixi-host. The host CSS uses position:absolute
-        // with width:100%/height:100%, so a percentage-positioned input
-        // stays glued to the label even as the user pans/zooms.
-        const screenX = labelEditor.anchor.x * canvas.viewport.zoom + canvas.viewport.x
-        const screenY = labelEditor.anchor.y * canvas.viewport.zoom + canvas.viewport.y
-        return (
-          <input
-            key={labelEditor.openEdgeId}
-            className="edge-label-editor"
-            type="text"
-            value={labelDraft}
-            autoFocus
-            style={{
-              left: `${screenX}px`,
-              top: `${screenY}px`,
-            }}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => setLabelDraft(event.target.value)}
-            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-              if (event.key === 'Enter') {
-                labelEditor.commit(labelDraft)
-              } else if (event.key === 'Escape') {
-                labelEditor.cancel()
-              }
-            }}
-            onBlur={() => labelEditor.commit(labelDraft)}
-            aria-label="Edit connection label"
-          />
-        )
-      })()}
-
-      <FocusBar focus={canvas.focus} roles={canvas.roles} onChange={canvas.setFocus} />
-
-      <AlignmentChecklist
-        diagnostics={canvas.diagnostics}
-        onSelectDiagnostic={(diagnostic) => canvas.selectDiagnosticTarget(diagnostic.targetType, diagnostic.targetId)}
-      />
-
-      <ActivationBar
-        activation={canvas.activation}
-        eligible={canvas.activationEligible.eligible}
-        reasons={canvas.activationEligible.reasons}
-        bottlenecks={canvas.bottleneckMetrics}
-        onActivate={canvas.activateMap}
-      />
-
-      <div className="keyboard-hint" aria-hidden="true">
-        <span><kbd>A</kbd> Activity</span>
-        <span><kbd>D</kbd> Decision</span>
-        <span><kbd>L</kbd> Layout</span>
-        <span><kbd>⌘Z</kbd> Undo</span>
-        <span><kbd>Del</kbd> Delete</span>
-        <span><kbd>Space</kbd>+Drag Pan</span>
-        <span><kbd>+</kbd><kbd>-</kbd> Zoom</span>
-      </div>
-
-      <div className="status-bar" aria-live="polite">
-        <span>{canvas.nodes.length} nodes</span>
-        <span>·</span>
-        <span>{canvas.edges.length} edges</span>
-        <span>·</span>
-        <span>{Math.round(canvas.viewport.zoom * 100)}%</span>
-        {canvas.selectedNodeIds.size > 0 && (
-          <>
-            <span>·</span>
-            <span>{canvas.selectedNodeIds.size} selected</span>
-          </>
-        )}
-      </div>
-
-      <PropertiesPanel
-        node={canvas.editorNode}
-        edge={canvas.editorEdge}
-        onUpdateNode={canvas.updateNodeData}
-        onUpdateEdge={canvas.updateEdgeData}
-        onClose={() => canvas.closeEditor()}
-      />
-    </div>
+    <CanvasChrome
+      hostRef={hostRef}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      onQuickCreate={canvas.quickCreate}
+      toolbar={{
+        onRemove: canvas.removeSelected,
+        onAutoLayout: () => canvas.autoLayout(),
+        onUndo: canvas.undo,
+        onRedo: canvas.redo,
+        onExport: handleExport,
+        onZoomIn: canvas.zoomIn,
+        onZoomOut: canvas.zoomOut,
+        onZoomReset: canvas.zoomReset,
+        canUndo: canvas.canUndo,
+        canRedo: canvas.canRedo,
+        hasSelection,
+        zoomPercent: Math.round(canvas.viewport.zoom * 100),
+      }}
+      overlays={{
+        hostOrigin,
+        labelEditor,
+        viewport: canvas.viewport,
+        edges: canvas.edges,
+        nodes: canvas.nodes,
+        selectedNodeIds: canvas.selectedNodeIds,
+        selectedEdge: canvas.selectedEdge,
+        connectionCreateMenu,
+        edgeContextMenu,
+        onPickConnectionNodeType: handlePickConnectionNodeType,
+        onCancelConnectionCreate: handleCancelConnectionCreate,
+        onConnect: canvas.onConnect,
+        onOpenConnectionCreateMenu: openConnectionCreateMenu,
+        onOpenEdgeContextMenu: handleOpenEdgeContextMenu,
+        onCloseEdgeContextMenu: handleCloseEdgeContextMenu,
+        onUpdateEdgeColor: handleUpdateEdgeColor,
+        onEdgeClick: canvas.onEdgeClick,
+        onNodeClick: canvas.onNodeClick,
+        openEditor: canvas.openEditor,
+        openEdgeEditor: canvas.openEdgeEditor,
+        removeSelected: canvas.removeSelected,
+        nodesById,
+      }}
+      focusBar={{
+        focus: canvas.focus,
+        roles: canvas.roles,
+        onChange: canvas.setFocus,
+      }}
+      checklist={{
+        diagnostics: canvas.diagnostics,
+        onSelectDiagnostic: (diagnostic) => canvas.selectDiagnosticTarget(diagnostic.targetType, diagnostic.targetId),
+      }}
+      activationBar={{
+        activation: canvas.activation,
+        eligible: canvas.activationEligible.eligible,
+        reasons: canvas.activationEligible.reasons,
+        bottlenecks: canvas.bottleneckMetrics,
+        onActivate: canvas.activateMap,
+      }}
+      processAssets={{
+        document: canvas.document,
+        selectedAsset: canvas.selectedAsset,
+        onSelectAsset: canvas.assetActions.selectAsset,
+        onCreateAsset: canvas.assetActions.createAsset,
+        onRenameAsset: canvas.assetActions.renameAsset,
+        onDeleteAsset: canvas.assetActions.deleteAsset,
+        onUpdateAsset: canvas.assetActions.updateAsset,
+        onLinkAsset: canvas.assetActions.linkAsset,
+        onUnlinkAsset: canvas.assetActions.unlinkAsset,
+        onSelectObjectTarget: canvas.assetActions.selectObjectTarget,
+      }}
+      statusBar={{
+        nodeCount: canvas.nodes.length,
+        edgeCount: canvas.edges.length,
+        zoomPercent: Math.round(canvas.viewport.zoom * 100),
+        selectedNodeCount: selectionCount,
+      }}
+      propertiesPanel={{
+        node: canvas.editorNode,
+        edge: canvas.editorEdge,
+        nodes: canvas.nodes,
+        processAssets: canvas.processAssets,
+        assetActions: canvas.assetActions,
+        onUpdateNode: canvas.updateNodeData,
+        onUpdateEdge: canvas.updateEdgeData,
+        onDeleteEdge: canvas.removeSelected,
+        onClose: () => canvas.closeEditor(),
+      }}
+    />
   )
-}
-
-function findNodeAtPosition(
-  screenX: number,
-  screenY: number,
-  nodes: ReturnType<typeof toGraphNode>[],
-  excludeNodeId: string,
-  viewport: { x: number; y: number; zoom: number },
-): ReturnType<typeof toGraphNode> | null {
-  // Convert screen coordinates to world coordinates
-  const worldX = (screenX - viewport.x) / viewport.zoom
-  const worldY = (screenY - viewport.y) / viewport.zoom
-
-  for (const node of nodes) {
-    if (node.id === excludeNodeId) continue
-    if (
-      worldX >= node.x &&
-      worldX <= node.x + node.width &&
-      worldY >= node.y &&
-      worldY <= node.y + node.height
-    ) {
-      return node
-    }
-  }
-  return null
-}
-
-function toGraphNode(node: ProcessNode) {
-  if (node.data.kind === 'activity') {
-    return {
-      id: node.id,
-      type: 'activity' as const,
-      x: node.position.x,
-      y: node.position.y,
-      width: 220,
-      height: 96,
-      title: node.data.title,
-      summary: node.data.summary,
-      roleTags: node.data.roleIds,
-      ports: [
-        { id: 'in', side: 'top' as const },
-        { id: 'out', side: 'bottom' as const },
-      ],
-    }
-  }
-
-  if (node.data.kind === 'decision') {
-    return {
-      id: node.id,
-      type: 'decision' as const,
-      x: node.position.x,
-      y: node.position.y,
-      width: 180,
-      height: 108,
-      title: node.data.title,
-      criteria: node.data.criteria,
-      roleTags: [],
-      ports: [
-        { id: 'in', side: 'top' as const },
-        { id: 'yes', side: 'bottom' as const },
-        { id: 'no', side: 'right' as const },
-      ],
-    }
-  }
-
-  const isStart = node.data.kind === 'start'
-  const data = node.data
-  const label = data.kind === 'start' || data.kind === 'end' ? data.label : ''
-
-  return {
-    id: node.id,
-    type: isStart ? ('start' as const) : ('end' as const),
-    x: node.position.x,
-    y: node.position.y,
-    width: 120,
-    height: 56,
-    title: label,
-    roleTags: [],
-    ports: [{ id: isStart ? 'out' : 'in', side: isStart ? ('bottom' as const) : ('top' as const) }],
-  }
 }

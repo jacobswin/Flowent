@@ -1,18 +1,25 @@
 import { PROCESS_ELEMENTS, type ProcessElementType } from './processElements'
+import { TopDockPanel } from './TopDockPanel'
 
 interface ProcessElementPaletteProps {
   onQuickCreate: (type: ProcessElementType) => void
+  defaultCollapsed?: boolean
 }
 
 const DRAG_MIME_TYPE = 'application/x-flowent-process-element'
 
-export function ProcessElementPalette({ onQuickCreate }: ProcessElementPaletteProps) {
+export function ProcessElementPalette({ onQuickCreate, defaultCollapsed = true }: ProcessElementPaletteProps) {
   return (
-    <section className="process-element-palette" aria-label="Process element library">
-      <div className="process-element-palette-header">
-        <span className="process-element-palette-title">Elements</span>
-        <span className="process-element-palette-hint">Click to quick-create · drag to place</span>
-      </div>
+    <TopDockPanel
+      className="process-element-palette"
+      ariaLabel="Process element library"
+      storageKey="flowent:top-dock:process-elements:collapsed"
+      title="Elements"
+      subtitle="Click to quick-create · drag to place"
+      width={260}
+      collapsedWidth={220}
+      defaultCollapsed={defaultCollapsed}
+    >
       <div className="process-element-list">
         {PROCESS_ELEMENTS.map((element) => (
           <button
@@ -39,7 +46,7 @@ export function ProcessElementPalette({ onQuickCreate }: ProcessElementPalettePr
           </button>
         ))}
       </div>
-    </section>
+    </TopDockPanel>
   )
 }
 

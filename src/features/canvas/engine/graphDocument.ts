@@ -1,10 +1,12 @@
 import type { GraphDocument, GraphEdge, GraphNode } from '../canvasTypes'
+import { createEmptyProcessAssets } from '../processAssets'
 
 export function createEmptyDocument(id: string): GraphDocument {
   return {
     id,
     nodes: new Map(),
     edges: new Map(),
+    processAssets: createEmptyProcessAssets(),
     selectedNodeIds: new Set(),
     selectedEdgeIds: new Set(),
     viewport: { x: 0, y: 0, zoom: 1 },

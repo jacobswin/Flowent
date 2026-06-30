@@ -1,9 +1,19 @@
 import { Container, Graphics, Text } from 'pixi.js'
 import type { GraphNode } from '../canvasTypes'
+import { describeReviewStatus } from '../reviewStatus'
+import {
+  formatDecisionOutcomeSummary,
+  formatStageConditionSummary,
+  truncateSummaryLine,
+} from './drawNodeSummaries'
 
 export interface DrawNodesOptions {
   dimmedNodeIds?: Set<string>
 }
+
+const NODE_HALO_STROKE = 0x93c5fd
+const NODE_HALO_ALPHA = 0.35
+const NODE_HALO_PADDING = 6
 
 export function drawNodes(
   layer: Container,
@@ -22,7 +32,24 @@ export function drawNodes(
 
     const selected = selectedNodeIds.has(node.id)
 
+    const halo = new Graphics()
     const shape = new Graphics()
+
+    if (selected) {
+      if (node.type === 'start' || node.type === 'end') {
+        halo.roundRect(-NODE_HALO_PADDING, -NODE_HALO_PADDING, node.width + NODE_HALO_PADDING * 2, node.height + NODE_HALO_PADDING * 2, node.height / 2 + NODE_HALO_PADDING)
+      } else if (node.type === 'decision') {
+        halo.moveTo(node.width / 2, -NODE_HALO_PADDING)
+        halo.lineTo(node.width + NODE_HALO_PADDING, node.height / 2)
+        halo.lineTo(node.width / 2, node.height + NODE_HALO_PADDING)
+        halo.lineTo(-NODE_HALO_PADDING, node.height / 2)
+        halo.closePath()
+      } else {
+        const radius = node.type === 'stage' ? 24 : node.type === 'bottleneck' ? 20 : 14
+        halo.roundRect(-NODE_HALO_PADDING, -NODE_HALO_PADDING, node.width + NODE_HALO_PADDING * 2, node.height + NODE_HALO_PADDING * 2, radius)
+      }
+      halo.stroke({ color: NODE_HALO_STROKE, width: 4, alpha: NODE_HALO_ALPHA })
+    }
 
     if (node.type === 'start' || node.type === 'end') {
       const fill = node.type === 'start' ? 0x1d1d1f : 0xffffff
@@ -37,19 +64,19 @@ export function drawNodes(
       shape.lineTo(0, node.height / 2)
       shape.closePath()
       shape.fill(0xffffff)
-      shape.stroke({ color: selected ? 0x0071e3 : 0xc4c4c6, width: selected ? 2 : 1.5 })
+      shape.stroke({ color: selected ? 0x0f4aa6 : 0xc4c4c6, width: selected ? 2.4 : 1.5 })
     } else if (node.type === 'stage') {
       shape.roundRect(0, 0, node.width, node.height, 22)
       shape.fill(0xf8fafc)
-      shape.stroke({ color: selected ? 0x2563eb : 0x94a3b8, width: selected ? 2.5 : 1.6 })
+      shape.stroke({ color: selected ? 0x1d4ed8 : 0x94a3b8, width: selected ? 2.6 : 1.6 })
     } else if (node.type === 'bottleneck') {
       shape.roundRect(0, 0, node.width, node.height, 18)
       shape.fill(0xfff7ed)
-      shape.stroke({ color: selected ? 0x2563eb : 0xea580c, width: selected ? 2.5 : 1.6 })
+      shape.stroke({ color: selected ? 0x9a3412 : 0xea580c, width: selected ? 2.6 : 1.6 })
     } else {
       shape.roundRect(0, 0, node.width, node.height, 12)
       shape.fill(0xffffff)
-      shape.stroke({ color: selected ? 0x0071e3 : 0xe5e5e7, width: selected ? 2 : 1.5 })
+      shape.stroke({ color: selected ? 0x1d4ed8 : 0xe5e5e7, width: selected ? 2.2 : 1.5 })
     }
 
     const title = new Text({
@@ -66,6 +93,7 @@ export function drawNodes(
     title.x = node.type === 'start' || node.type === 'end' ? node.width / 2 - title.width / 2 : 14
     title.y = node.type === 'start' || node.type === 'end' ? node.height / 2 - title.height / 2 : 14
 
+    container.addChild(halo)
     container.addChild(shape)
     container.addChild(title)
 
@@ -99,35 +127,99 @@ export function drawNodes(
       container.addChild(roles)
     }
 
+    if (node.type === 'activity' && node.assetSummary) {
+      const roleSummary = [
+        ...node.assetSummary.responsibleRoles.map((role) => `R:${role}`),
+        ...node.assetSummary.accountableRoles.map((role) => `A:${role}`),
+      ].join(' ')
+      const assetSummary = [
+        node.assetSummary.inputCount > 0 ? `In ${node.assetSummary.inputCount}` : '',
+        node.assetSummary.outputCount > 0 ? `Out ${node.assetSummary.outputCount}` : '',
+        node.assetSummary.guidanceCount > 0 ? `How ${node.assetSummary.guidanceCount}` : '',
+      ].filter(Boolean).join(' · ')
+      const chipText = [roleSummary, assetSummary].filter(Boolean).join(' · ')
+      if (chipText) {
+        drawChip(container, truncateSummaryLine(chipText, 36), 14, Math.max(74, node.height - 26), {
+          bg: 0xf0fdf4,
+          stroke: 0x86efac,
+          text: 0x166534,
+        })
+      }
+    }
+
     if (node.owner && (node.type === 'stage' || node.type === 'decision')) {
-      const owner = new Text({
-        text: `Owner: ${node.owner}`,
+      drawChip(container, `Owner · ${node.owner}`, 14, 38, {
+        bg: 0xe0ecff,
+        stroke: 0x93c5fd,
+        text: 0x1d4ed8,
+      })
+    }
+
+    if (node.type === 'decision' && node.decisionOutcomes && node.decisionOutcomes.length > 0) {
+      const outcomes = new Text({
+        text: truncateSummaryLine(formatDecisionOutcomeSummary(node.decisionOutcomes), 28),
         style: {
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
-          fontSize: 11,
-          fill: 0x64748b,
+          fontSize: 10,
+          fontWeight: '500',
+          fill: 0x475569,
         },
       })
-      owner.x = 14
-      owner.y = 38
-      container.addChild(owner)
+      outcomes.x = 14
+      outcomes.y = node.owner ? 60 : 38
+      container.addChild(outcomes)
+    }
+
+    if (node.type === 'stage') {
+      if (node.goal) {
+        const goal = new Text({
+          text: truncateSummaryLine(node.goal, 28),
+          style: {
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+            fontSize: 10,
+            fontWeight: '500',
+            fill: 0x475569,
+          },
+        })
+        goal.x = 14
+        goal.y = node.owner ? 60 : 38
+        container.addChild(goal)
+      }
+
+      const conditions = formatStageConditionSummary(node.entryCondition ?? '', node.exitCondition ?? '')
+      if (conditions) {
+        const conditionsText = new Text({
+          text: truncateSummaryLine(conditions, 32),
+          style: {
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+            fontSize: 9,
+            fontWeight: '500',
+            fill: 0x64748b,
+          },
+        })
+        conditionsText.x = 14
+        conditionsText.y = node.goal ? (node.owner ? 76 : 54) : (node.owner ? 60 : 38)
+        container.addChild(conditionsText)
+      }
+
+      if (node.assetSummary?.milestoneCount) {
+        drawChip(container, `${node.assetSummary.milestoneCount} milestones`, 14, node.height - 28, {
+          bg: 0xfef3c7,
+          stroke: 0xfcd34d,
+          text: 0x92400e,
+        })
+      }
     }
 
     if (node.reviewStatus && node.type === 'bottleneck') {
-      const status = new Text({
-        text: node.reviewStatus,
-        style: {
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
-          fontSize: 11,
-          fontWeight: '600',
-          fill: 0xc2410c,
-        },
+      drawChip(container, describeReviewStatus(node.reviewStatus), 14, 38, {
+        bg: 0xffedd5,
+        stroke: 0xfdba74,
+        text: 0x9a3412,
       })
-      status.x = 14
-      status.y = 38
-      container.addChild(status)
     }
 
     // Draw connection ports
@@ -152,7 +244,13 @@ function drawPorts(container: Container, node: GraphNode): void {
     const { x, y } = getPortPosition(node, port.id)
     const portCircle = new Graphics()
 
-    // Draw visible port
+    // Draw the port. The circle is shown at low alpha by default
+    // so the canvas doesn't feel busy, and the ProcessCanvas
+    // per-frame pass fades it in when its parent node is
+    // hovered. We tag it with a label so the redraw pass can
+    // find it without iterating every child.
+    portCircle.label = `port-circle:${port.id}`
+    portCircle.alpha = 0.18
     portCircle.circle(x - node.x, y - node.y, portRadius)
     portCircle.fill(0xffffff)
     portCircle.stroke({ color: portColor, width: 2 })
@@ -182,6 +280,35 @@ function drawPorts(container: Container, node: GraphNode): void {
     container.addChild(portCircle)
     container.addChild(hitArea)
   }
+}
+
+function drawChip(
+  container: Container,
+  text: string,
+  x: number,
+  y: number,
+  palette: { bg: number; stroke: number; text: number },
+): void {
+  const label = new Text({
+    text,
+    style: {
+      fontFamily:
+        '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+      fontSize: 10,
+      fontWeight: '600',
+      fill: palette.text,
+    },
+  })
+  const chipWidth = label.width + 16
+  const chipHeight = 18
+  const shape = new Graphics()
+  shape.roundRect(x, y, chipWidth, chipHeight, 9)
+  shape.fill(palette.bg)
+  shape.stroke({ color: palette.stroke, width: 1 })
+  label.x = x + 8
+  label.y = y + 2
+  container.addChild(shape)
+  container.addChild(label)
 }
 
 function getPortPosition(node: GraphNode, portId: string): { x: number; y: number } {

@@ -17,6 +17,19 @@ export async function createPixiStage(host: HTMLDivElement): Promise<PixiStage> 
 
   host.appendChild(app.canvas)
 
+  // Pixi v8 defaults `stage.eventMode` to 'passive', which only
+  // dispatches events to children whose own eventMode is 'static' or
+  // 'dynamic'. The hit area we attach in ProcessCanvas sets
+  // eventMode = 'static' so it should still receive events, but
+  // making the stage 'static' too is harmless and lets future
+  // eventMode='static' children behave consistently.
+  app.stage.eventMode = 'static'
+
+  // Expose the Pixi Application on the host for e2e debugging and
+  // future tooling. Tests can read pixi.stage.children to inspect
+  // the scene graph and confirm event listeners are attached.
+  ;(host as unknown as { __pixiApp?: Application }).__pixiApp = app
+
   const root = new Container()
   app.stage.addChild(root)
 

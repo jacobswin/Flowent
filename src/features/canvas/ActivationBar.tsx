@@ -26,8 +26,8 @@ export function ActivationBar({ activation, eligible, reasons, bottlenecks, onAc
       </div>
       {!eligible && activation.status !== 'activated' && (
         <ul className="activation-bar-reasons">
-          {reasons.slice(0, 3).map((reason) => (
-            <li key={reason}>{reason}</li>
+          {reasons.slice(0, 3).map((reason, index) => (
+            <li key={`${reason}-${index}`}>{reason}</li>
           ))}
         </ul>
       )}

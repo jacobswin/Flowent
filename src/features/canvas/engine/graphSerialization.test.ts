@@ -35,4 +35,58 @@ describe('graphSerialization', () => {
     expect(doc.nodes.get('start')?.type).toBe('start')
     expect(doc.selectedNodeIds).toEqual(new Set(['start']))
   })
+
+  it('adds empty process assets when deserializing an older document', () => {
+    const doc = deserializeGraphDocument({
+      id: 'legacy-map',
+      nodes: {},
+      edges: {},
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      meta: { dirty: false, version: 1 },
+    })
+
+    expect(doc.processAssets).toEqual({
+      workProducts: {},
+      guidanceItems: {},
+      milestones: {},
+    })
+  })
+
+  it('persists process assets through serialization', () => {
+    const doc = {
+      ...createEmptyDocument('map-1'),
+      processAssets: {
+        workProducts: {
+          'wp-1': {
+            id: 'wp-1',
+            title: 'Ready brief',
+            state: 'Ready',
+            description: '',
+            producerNodeIds: ['activity-1'],
+            consumerNodeIds: [],
+            handoffEdgeIds: [],
+            guidanceIds: [],
+          },
+        },
+        guidanceItems: {},
+        milestones: {},
+      },
+    }
+
+    const serialized = serializeGraphDocument(doc)
+    const hydrated = deserializeGraphDocument(serialized)
+
+    expect(hydrated.processAssets.workProducts['wp-1']?.title).toBe('Ready brief')
+    expect(hydrated.processAssets.workProducts['wp-1']?.activityLinks).toEqual([
+      {
+        id: 'wp-link-wp-1-activity-1-output-ready',
+        nodeId: 'activity-1',
+        relation: 'output',
+        maturity: 'Ready',
+      },
+    ])
+    expect(serialized.processAssets?.workProducts['wp-1']?.producerNodeIds).toEqual(['activity-1'])
+  })
 })

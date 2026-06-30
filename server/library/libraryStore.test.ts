@@ -112,6 +112,61 @@ describe('libraryStore', () => {
     expect(lib.maps[0].document).toEqual(doc)
   })
 
+  it('persists work product activity maturity links in map documents', async () => {
+    let lib = createEmptyLibrary()
+    lib = addMap(lib, { id: 'm1', name: 'M', folderId: null, order: 0 })
+    const doc = {
+      id: 'm1',
+      nodes: {
+        a1: {
+          id: 'a1',
+          type: 'activity' as const,
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          title: 'Activity',
+          roleTags: [],
+          ports: [],
+        },
+      },
+      edges: {},
+      processAssets: {
+        workProducts: {
+          'wp-1': {
+            id: 'wp-1',
+            title: 'Brief',
+            state: 'Draft',
+            description: '',
+            activityLinks: [
+              { id: 'link-1', nodeId: 'a1', relation: 'input' as const, maturity: 'Draft' },
+              { id: 'link-2', nodeId: 'a1', relation: 'output' as const, maturity: 'Approved' },
+            ],
+            producerNodeIds: ['a1'],
+            consumerNodeIds: ['a1'],
+            handoffEdgeIds: [],
+            guidanceIds: [],
+          },
+        },
+        guidanceItems: {},
+        milestones: {},
+      },
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      meta: { dirty: false, version: 1 },
+    }
+    lib = setMapDocument(lib, 'm1', doc as never)
+
+    await saveLibrary(file, lib)
+    const loaded = await loadLibrary(file)
+
+    expect(loaded.maps[0].document?.processAssets?.workProducts['wp-1']?.activityLinks).toEqual([
+      { id: 'link-1', nodeId: 'a1', relation: 'input', maturity: 'Draft' },
+      { id: 'link-2', nodeId: 'a1', relation: 'output', maturity: 'Approved' },
+    ])
+  })
+
   it('recovers a corrupt file by backing it up and returning empty', async () => {
     writeFileSync(file, '{ this is not json', 'utf8')
     const lib = await loadLibrary(file)

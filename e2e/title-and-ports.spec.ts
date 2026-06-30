@@ -1,6 +1,32 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
+const statusBar = '.status-bar'
+
+async function openNewActivityEditor(page: import('@playwright/test').Page) {
+  const target = await page.evaluate(() => {
+    const positions = (window as unknown as { __flowentGetNodePositions?: () => Record<string, unknown> }).__flowentGetNodePositions?.() ?? {}
+    const activityId = Object.keys(positions).find((id) => id.startsWith('activity-'))
+    if (!activityId) return null
+    const bounds = (window as unknown as {
+      __flowentGetNodeBounds?: (id: string) => { x: number; y: number; width: number; height: number } | null
+    }).__flowentGetNodeBounds?.(activityId)
+    const viewport = (window as unknown as { __flowentGetViewport?: () => { x: number; y: number; zoom: number } | null }).__flowentGetViewport?.()
+    return bounds && viewport ? { bounds, viewport } : null
+  })
+  expect(target).toBeTruthy()
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.click(
+    box.x + (target!.bounds.x + target!.bounds.width / 2) * target!.viewport.zoom + target!.viewport.x,
+    box.y + (target!.bounds.y + target!.bounds.height / 2) * target!.viewport.zoom + target!.viewport.y,
+  )
+  await page
+    .getByRole('toolbar', { name: 'Node quick actions' })
+    .getByRole('button', { name: 'Edit node' })
+    .click()
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -24,12 +50,10 @@ test('activity title edit: focus + type + commit on Enter', async ({ page }) => 
   await page.waitForTimeout(300)
   await page.keyboard.press('0')
 
-  await page.getByRole('button', { name: 'Activity' }).first().click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(300)
 
-  const box = await page.locator(pixiCanvas).boundingBox()
-  if (!box) throw new Error('no canvas')
-  await page.mouse.dblclick(box.x + 410, box.y + 268)
+  await openNewActivityEditor(page)
   await page.waitForTimeout(300)
 
   const titleInput = page.getByLabel('Title')
@@ -53,6 +77,28 @@ test('activity title edit: focus + type + commit on Enter', async ({ page }) => 
   }, { timeout: 5000 }).toContain('Customer onboarding')
 })
 
+test('typing in a block editor does not trigger canvas shortcuts', async ({ page }) => {
+  await page.waitForSelector(pixiCanvas, { timeout: 30000 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press('0')
+
+  await clickPaletteElement(page, 'Activity')
+  await page.waitForTimeout(300)
+  await expect(page.locator(statusBar)).toContainText('2 nodes')
+
+  await openNewActivityEditor(page)
+  await page.waitForTimeout(300)
+
+  const titleInput = page.getByLabel('Title')
+  await expect(titleInput).toBeFocused()
+  await page.keyboard.press('Delete')
+  await page.keyboard.press('a')
+  await page.waitForTimeout(150)
+
+  await expect(page.locator(statusBar)).toContainText('2 nodes')
+  await expect(titleInput).toHaveValue(/a$/)
+})
+
 test('decision node only has left+right ports after migration', async ({ page }) => {
   // First, save a map with a legacy 3-port decision so the migration path runs.
   await page.evaluate(async () => {
@@ -67,7 +113,7 @@ test('decision node only has left+right ports after migration', async ({ page })
   await page.waitForTimeout(300)
   await page.keyboard.press('0')
 
-  await page.getByRole('button', { name: 'Decision' }).first().click()
+  await clickPaletteElement(page, 'Decision')
   await page.waitForTimeout(300)
 
   // Decision appears in the saved doc with 2 ports

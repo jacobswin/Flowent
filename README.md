@@ -6,9 +6,8 @@ Flowent is a map-first process development system for product teams. It helps
 teams model how work moves, who owns each step, where decisions happen, and
 which artifacts, guidance, milestones, and handoffs keep delivery aligned.
 
-The current product direction is a visual process modeling canvas inspired by
-Stages-style process architecture, but kept lightweight for team-level process
-design instead of enterprise governance.
+The current product direction is a lightweight visual process modeling canvas
+for team-level process design instead of enterprise governance.
 
 ## What Flowent Supports
 
@@ -17,7 +16,7 @@ design instead of enterprise governance.
 - **Fast connection flow**: connect from node endpoints, quick-create the next
   node from a node `+`, edit connection labels and colors, delete nodes or
   edges, and render directional arrowheads that follow the line angle.
-- **Stages-style assets**:
+- **Process assets**:
   - **Who**: Activity responsibilities with RASIC roles.
   - **What**: Work products linked as inputs, outputs, or handoff artifacts.
   - **When**: Milestones tied to stages and work product maturity.

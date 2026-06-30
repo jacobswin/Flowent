@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 
@@ -42,11 +43,11 @@ test('LIVE: take screenshots of the canvas in several states', async ({ page }) 
   await page.screenshot({ path: 'test-results/01-initial.png', fullPage: true })
 
   // Add an activity, a decision, an end.
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(120)
-  await page.locator('button[aria-label^="Decision:"]').click()
+  await clickPaletteElement(page, 'Decision')
   await page.waitForTimeout(120)
-  await page.locator('button[aria-label^="End:"]').click()
+  await clickPaletteElement(page, 'End')
   await page.waitForTimeout(120)
   await page.screenshot({ path: 'test-results/02-with-nodes.png', fullPage: true })
 

@@ -8,7 +8,7 @@ describe('ProcessElementPalette', () => {
   })
 
   it('renders process-specific elements', () => {
-    render(<ProcessElementPalette onQuickCreate={() => {}} />)
+    render(<ProcessElementPalette defaultCollapsed={false} onQuickCreate={() => {}} />)
 
     expect(screen.getByRole('button', { name: /stage/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
@@ -18,7 +18,7 @@ describe('ProcessElementPalette', () => {
 
   it('quick-creates the selected element when clicked', () => {
     const onQuickCreate = vi.fn()
-    render(<ProcessElementPalette onQuickCreate={onQuickCreate} />)
+    render(<ProcessElementPalette defaultCollapsed={false} onQuickCreate={onQuickCreate} />)
 
     fireEvent.click(screen.getByRole('button', { name: /activity/i }))
 
@@ -27,7 +27,7 @@ describe('ProcessElementPalette', () => {
 
   it('stores the element type in the drag payload', () => {
     const setData = vi.fn()
-    render(<ProcessElementPalette onQuickCreate={() => {}} />)
+    render(<ProcessElementPalette defaultCollapsed={false} onQuickCreate={() => {}} />)
 
     fireEvent.dragStart(screen.getByRole('button', { name: /decision/i }), {
       dataTransfer: { setData, effectAllowed: '' },
@@ -36,31 +36,28 @@ describe('ProcessElementPalette', () => {
     expect(setData).toHaveBeenCalledWith('application/x-flowent-process-element', 'decision')
   })
 
-  it('collapses and expands the floating elements panel', () => {
+  it('defaults collapsed and expands from the top dock title', () => {
     render(<ProcessElementPalette onQuickCreate={() => {}} />)
-
-    fireEvent.click(screen.getByRole('button', { name: /collapse elements/i }))
 
     expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /expand elements/i }))
 
     expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /collapse elements/i }))
+
+    expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
   })
 
-  it('can be moved by dragging the panel title', () => {
+  it('uses a fixed top dock panel instead of draggable coordinates', () => {
     render(<ProcessElementPalette onQuickCreate={() => {}} />)
 
     const panel = screen.getByLabelText('Process element library')
-    const title = screen.getByText('Elements')
-    const initialLeft = Number.parseFloat(panel.style.left)
-    const initialTop = Number.parseFloat(panel.style.top)
 
-    fireEvent.pointerDown(title, { clientX: 900, clientY: 120, pointerId: 1, button: 0 })
-    fireEvent.pointerMove(title, { clientX: 760, clientY: 190, pointerId: 1, button: 0 })
-    fireEvent.pointerUp(title, { clientX: 760, clientY: 190, pointerId: 1, button: 0 })
-
-    expect(Number.parseFloat(panel.style.left)).toBeLessThan(initialLeft)
-    expect(Number.parseFloat(panel.style.top)).toBeGreaterThan(initialTop)
+    expect(panel).toHaveClass('top-dock-panel')
+    expect(panel.style.left).toBe('')
+    expect(panel.style.top).toBe('')
+    expect(panel.style.getPropertyValue('--top-dock-width')).toBe('260px')
   })
 })

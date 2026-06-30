@@ -47,6 +47,8 @@ export function toGraphNode(node: ProcessNode): GraphNode {
         title: node.data.title,
         summary: node.data.summary,
         expectations: node.data.expectations ?? '',
+        responsibilities: node.data.responsibilities ?? [],
+        assetSummary: node.data.assetSummary,
         roleTags: [...node.data.roleIds],
       }
     }
@@ -84,6 +86,7 @@ export function toGraphNode(node: ProcessNode): GraphNode {
         entryCondition: node.data.entryCondition,
         exitCondition: node.data.exitCondition,
         owner: node.data.owner,
+        assetSummary: node.data.assetSummary,
         roleTags: [],
       }
     }

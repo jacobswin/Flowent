@@ -30,7 +30,7 @@ vi.mock('pixi.js', async () => {
 
 import { Container } from 'pixi.js'
 import type { FederatedPointerEvent } from 'pixi.js'
-import { drawEdges, getDisplayEdgeLabel, getEdgeStrokeColor, getSelectedEdgeMetadataText } from './drawEdges'
+import { drawEdges, getArrowGeometry, getDisplayEdgeLabel, getEdgeStrokeColor, getSelectedEdgeMetadataText } from './drawEdges'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
 function makeNode(id: string, x: number, y: number): GraphNode {
@@ -115,6 +115,84 @@ describe('drawEdges labelHitLayer', () => {
 })
 
 describe('drawEdges visual helpers', () => {
+  it('draws the curve and filled arrowhead as separate graphics', () => {
+    const edgeLayer = new Container()
+    const nodesById = new Map<string, GraphNode>([
+      ['a', makeNode('a', 0, 0)],
+      ['b', makeNode('b', 200, 0)],
+    ])
+    const edges: GraphEdge[] = [makeEdge('e1', '', 'a', 'b')]
+
+    drawEdges(edgeLayer, edges, nodesById, {})
+
+    expect(edgeLayer.children.some((child) => child.label === 'edge:e1')).toBe(true)
+    expect(edgeLayer.children.some((child) => child.label === 'edge-arrow:e1')).toBe(true)
+  })
+
+  it('places the arrowhead tip on the target endpoint and keeps the body on the incoming line', () => {
+    const leftTarget = getArrowGeometry({
+      from: { x: 120, y: 100 },
+      to: { x: 320, y: 100 },
+      cp1: { x: 170, y: 100 },
+      cp2: { x: 270, y: 100 },
+    })
+    const rightTarget = getArrowGeometry({
+      from: { x: 320, y: 100 },
+      to: { x: 120, y: 100 },
+      cp1: { x: 270, y: 100 },
+      cp2: { x: 170, y: 100 },
+    })
+    const topTarget = getArrowGeometry({
+      from: { x: 100, y: 260 },
+      to: { x: 100, y: 100 },
+      cp1: { x: 100, y: 220 },
+      cp2: { x: 100, y: 150 },
+    })
+    const bottomTarget = getArrowGeometry({
+      from: { x: 100, y: 100 },
+      to: { x: 100, y: 260 },
+      cp1: { x: 100, y: 140 },
+      cp2: { x: 100, y: 220 },
+    })
+
+    expect(leftTarget.tip).toEqual({ x: 320, y: 100 })
+    expect(leftTarget.base1.x).toBeLessThan(320)
+    expect(leftTarget.base2.x).toBeLessThan(320)
+
+    expect(rightTarget.tip).toEqual({ x: 120, y: 100 })
+    expect(rightTarget.base1.x).toBeGreaterThan(120)
+    expect(rightTarget.base2.x).toBeGreaterThan(120)
+
+    expect(topTarget.tip).toEqual({ x: 100, y: 100 })
+    expect(topTarget.base1.y).toBeGreaterThan(100)
+    expect(topTarget.base2.y).toBeGreaterThan(100)
+
+    expect(bottomTarget.tip).toEqual({ x: 100, y: 260 })
+    expect(bottomTarget.base1.y).toBeLessThan(260)
+    expect(bottomTarget.base2.y).toBeLessThan(260)
+  })
+
+  it('rotates the arrowhead with a diagonal incoming curve', () => {
+    const arrow = getArrowGeometry(
+      {
+        from: { x: 120, y: 220 },
+        to: { x: 320, y: 100 },
+        cp1: { x: 170, y: 220 },
+        cp2: { x: 270, y: 100 },
+      },
+      { length: 20, halfWidth: 4 },
+    )
+    const baseCenter = {
+      x: (arrow.base1.x + arrow.base2.x) / 2,
+      y: (arrow.base1.y + arrow.base2.y) / 2,
+    }
+
+    expect(arrow.tip).toEqual({ x: 320, y: 100 })
+    expect(baseCenter.x).toBeLessThan(320)
+    expect(baseCenter.y).toBeGreaterThan(100)
+    expect(Math.abs(arrow.base1.y - arrow.base2.y)).toBeGreaterThan(1)
+  })
+
   it('hides the label when the edge has no label', () => {
     expect(getDisplayEdgeLabel('')).toBeNull()
     expect(getDisplayEdgeLabel(undefined)).toBeNull()

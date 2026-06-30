@@ -328,16 +328,18 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
       onDrop={handleDrop}
       onQuickCreate={canvas.quickCreate}
       toolbar={{
-        onToggleConnector: canvas.toggleConnectorMode,
         onRemove: canvas.removeSelected,
         onAutoLayout: () => canvas.autoLayout(),
         onUndo: canvas.undo,
         onRedo: canvas.redo,
         onExport: handleExport,
+        onZoomIn: canvas.zoomIn,
+        onZoomOut: canvas.zoomOut,
+        onZoomReset: canvas.zoomReset,
         canUndo: canvas.canUndo,
         canRedo: canvas.canRedo,
         hasSelection,
-        connectorMode: canvas.connectorMode,
+        zoomPercent: Math.round(canvas.viewport.zoom * 100),
       }}
       overlays={{
         hostOrigin,
@@ -379,6 +381,18 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         bottlenecks: canvas.bottleneckMetrics,
         onActivate: canvas.activateMap,
       }}
+      processAssets={{
+        document: canvas.document,
+        selectedAsset: canvas.selectedAsset,
+        onSelectAsset: canvas.assetActions.selectAsset,
+        onCreateAsset: canvas.assetActions.createAsset,
+        onRenameAsset: canvas.assetActions.renameAsset,
+        onDeleteAsset: canvas.assetActions.deleteAsset,
+        onUpdateAsset: canvas.assetActions.updateAsset,
+        onLinkAsset: canvas.assetActions.linkAsset,
+        onUnlinkAsset: canvas.assetActions.unlinkAsset,
+        onSelectObjectTarget: canvas.assetActions.selectObjectTarget,
+      }}
       statusBar={{
         nodeCount: canvas.nodes.length,
         edgeCount: canvas.edges.length,
@@ -389,6 +403,8 @@ export function ProcessCanvas(props: { mapId?: string; initialDocument?: import(
         node: canvas.editorNode,
         edge: canvas.editorEdge,
         nodes: canvas.nodes,
+        processAssets: canvas.processAssets,
+        assetActions: canvas.assetActions,
         onUpdateNode: canvas.updateNodeData,
         onUpdateEdge: canvas.updateEdgeData,
         onDeleteEdge: canvas.removeSelected,

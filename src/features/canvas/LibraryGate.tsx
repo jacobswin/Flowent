@@ -7,10 +7,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLibrary } from './useLibrary'
 import { Library } from './Library'
 import { ProcessCanvas } from './ProcessCanvas'
-import type { GraphDocument } from './canvasTypes'
+import type { GraphDocument, ProcessAssets } from './canvasTypes'
 import { createEmptyDocument } from './engine/graphDocument'
 import { findMap, mostRecentMap } from './library'
 import { runCommand } from './engine/commands'
+import { normalizeProcessAssets } from './processAssets'
 
 const STORAGE_KEY = 'flowent.lastMapId'
 const URL_PARAM = 'map'
@@ -43,6 +44,7 @@ interface SerializedDocument {
   selectedNodeIds: string[]
   selectedEdgeIds: string[]
   viewport: { x: number; y: number; zoom: number }
+  processAssets?: ProcessAssets
   meta: { dirty: boolean; version: number }
 }
 
@@ -58,6 +60,7 @@ function documentFromSerialized(
     selectedNodeIds: new Set(document.selectedNodeIds),
     selectedEdgeIds: new Set(document.selectedEdgeIds),
     viewport: document.viewport,
+    processAssets: normalizeProcessAssets(document.processAssets),
     meta: document.meta,
   }
 }
@@ -162,6 +165,7 @@ function serializeDocument(doc: GraphDocument): import('./library').SavedMap['do
     selectedNodeIds: Array.from(doc.selectedNodeIds),
     selectedEdgeIds: Array.from(doc.selectedEdgeIds),
     viewport: doc.viewport,
+    processAssets: normalizeProcessAssets(doc.processAssets),
     meta: { dirty: false, version: doc.meta.version },
   }
 }

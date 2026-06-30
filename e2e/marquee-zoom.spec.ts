@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -53,7 +54,7 @@ test('marquee at zoom 2 still selects nodes in world space (regression)', async 
   // tile whose accessible name starts with "Activity:". We use the
   // aria-label prefix to avoid matching the alignment-diagnostic
   // buttons (which start with "Activity needs" / "Activity expectation").
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(300)
   // Each '=' press zooms by 1.2x; press 3 times to overshoot 200% in
   // case of step granularity. The test only cares about the world-coord

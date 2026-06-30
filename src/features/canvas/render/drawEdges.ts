@@ -39,10 +39,85 @@ export function getPortPosition(node: { x: number; y: number; width: number; hei
   }
 }
 
+type EdgeRoutePoints = {
+  from: { x: number; y: number }
+  to: { x: number; y: number }
+  cp1: { x: number; y: number }
+  cp2: { x: number; y: number }
+}
+
+type ArrowGeometry = {
+  tip: { x: number; y: number }
+  base1: { x: number; y: number }
+  base2: { x: number; y: number }
+}
+
+function normalizeVector(vector: { x: number; y: number }, fallback: { x: number; y: number }): { x: number; y: number } {
+  const length = Math.hypot(vector.x, vector.y)
+  if (length > 0.001) return { x: vector.x / length, y: vector.y / length }
+  const fallbackLength = Math.hypot(fallback.x, fallback.y)
+  if (fallbackLength > 0.001) return { x: fallback.x / fallbackLength, y: fallback.y / fallbackLength }
+  return { x: 1, y: 0 }
+}
+
+function sampleBezierPoint(points: EdgeRoutePoints, t: number): { x: number; y: number } {
+  const u = 1 - t
+  return {
+    x: u * u * u * points.from.x
+      + 3 * u * u * t * points.cp1.x
+      + 3 * u * t * t * points.cp2.x
+      + t * t * t * points.to.x,
+    y: u * u * u * points.from.y
+      + 3 * u * u * t * points.cp1.y
+      + 3 * u * t * t * points.cp2.y
+      + t * t * t * points.to.y,
+  }
+}
+
 /**
- * Compute the two arrowhead endpoints that the renderer uses to cap an edge
- * with a small triangle. Exported so the arrow placement can be unit-tested
- * without spinning up a Pixi stage.
+ * Places a filled arrowhead at the visible route endpoint, with the body of
+ * the arrow extending back along the incoming visible curve. The direction is
+ * sampled just before the endpoint so diagonal curves rotate the arrowhead
+ * with the line instead of locking it to the target port side.
+ */
+export function getArrowGeometry(
+  points: EdgeRoutePoints,
+  options: { tipInset?: number; length?: number; halfWidth?: number; directionSampleT?: number } = {},
+): ArrowGeometry {
+  const tipInset = options.tipInset ?? 0
+  const length = options.length ?? 13
+  const halfWidth = options.halfWidth ?? 5.5
+  const directionSampleT = Math.min(Math.max(options.directionSampleT ?? 0.9, 0), 0.999)
+  const directionSample = sampleBezierPoint(points, directionSampleT)
+  const direction = normalizeVector(
+    { x: points.to.x - directionSample.x, y: points.to.y - directionSample.y },
+    { x: points.to.x - points.cp2.x, y: points.to.y - points.cp2.y },
+  )
+  const tip = {
+    x: points.to.x - direction.x * tipInset,
+    y: points.to.y - direction.y * tipInset,
+  }
+  const baseCenter = {
+    x: tip.x - direction.x * length,
+    y: tip.y - direction.y * length,
+  }
+  const normal = { x: -direction.y, y: direction.x }
+  return {
+    tip,
+    base1: {
+      x: baseCenter.x + normal.x * halfWidth,
+      y: baseCenter.y + normal.y * halfWidth,
+    },
+    base2: {
+      x: baseCenter.x - normal.x * halfWidth,
+      y: baseCenter.y - normal.y * halfWidth,
+    },
+  }
+}
+
+/**
+ * Back-compatible helper for older tests/callers that only need the two base
+ * points of the arrowhead.
  */
 export function getArrowPoints(
   from: { x: number; y: number },
@@ -50,17 +125,19 @@ export function getArrowPoints(
   cp2: { x: number; y: number },
   size = 8,
 ): { arrow1: { x: number; y: number }; arrow2: { x: number; y: number } } {
-  const angle = Math.atan2(to.y - cp2.y, to.x - cp2.x)
-  return {
-    arrow1: {
-      x: to.x - size * Math.cos(angle - Math.PI / 6),
-      y: to.y - size * Math.sin(angle - Math.PI / 6),
+  const arrow = getArrowGeometry(
+    {
+      from,
+      to,
+      cp1: from,
+      cp2,
     },
-    arrow2: {
-      x: to.x - size * Math.cos(angle + Math.PI / 6),
-      y: to.y - size * Math.sin(angle + Math.PI / 6),
+    {
+      length: size,
+      halfWidth: size * 0.42,
     },
-  }
+  )
+  return { arrow1: arrow.base1, arrow2: arrow.base2 }
 }
 
 const EDGE_STROKE = 0x111827
@@ -86,25 +163,24 @@ export function getSelectedEdgeMetadataText(edge: Pick<GraphEdge, 'fromRole' | '
   return getSelectedEdgeMetadataLines(edge).join(' · ')
 }
 
-function drawRoute(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
+function drawRoute(graphics: Graphics, points: EdgeRoutePoints, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
   const color = options.colorOverride ?? EDGE_STROKE
   const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
   const alpha = options.alphaOverride ?? 1
-  graphics.stroke({ color, width, alpha })
   graphics.moveTo(points.from.x, points.from.y)
   graphics.bezierCurveTo(points.cp1.x, points.cp1.y, points.cp2.x, points.cp2.y, points.to.x, points.to.y)
+  graphics.stroke({ color, width, alpha })
 }
 
-function drawArrow(graphics: Graphics, points: { from: { x: number; y: number }; to: { x: number; y: number }; cp1: { x: number; y: number }; cp2: { x: number; y: number } }, options: DrawEdgesOptions & { widthOverride?: number; colorOverride?: number; alphaOverride?: number } = {}): void {
+function drawArrow(graphics: Graphics, points: EdgeRoutePoints, options: DrawEdgesOptions & { colorOverride?: number; alphaOverride?: number } = {}): void {
   const color = options.colorOverride ?? EDGE_STROKE
-  const width = options.widthOverride ?? (options.selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH)
   const alpha = options.alphaOverride ?? 1
-  const { arrow1, arrow2 } = getArrowPoints(points.from, points.to, points.cp2)
-  graphics.stroke({ color, width, alpha })
-  graphics.moveTo(points.to.x, points.to.y)
-  graphics.lineTo(arrow1.x, arrow1.y)
-  graphics.moveTo(points.to.x, points.to.y)
-  graphics.lineTo(arrow2.x, arrow2.y)
+  const arrow = getArrowGeometry(points)
+  graphics.moveTo(arrow.tip.x, arrow.tip.y)
+  graphics.lineTo(arrow.base1.x, arrow.base1.y)
+  graphics.lineTo(arrow.base2.x, arrow.base2.y)
+  graphics.closePath()
+  graphics.fill({ color, alpha })
 }
 
 function getPointerScreenPoint(event: unknown): { screenX: number; screenY: number } {
@@ -193,13 +269,18 @@ export function drawEdges(
         colorOverride: EDGE_SELECTED_HALO_STROKE,
         alphaOverride: 0.9,
       })
-      drawArrow(halo, points, {
+      layer.addChild(halo)
+
+      const haloArrow = new Graphics()
+      haloArrow.label = `edge-halo-arrow:${edge.id}`
+      haloArrow.eventMode = 'none'
+      haloArrow.alpha = dimmed ? 0.22 : 1
+      drawArrow(haloArrow, points, {
         ...options,
-        widthOverride: EDGE_SELECTED_HALO_WIDTH,
         colorOverride: EDGE_SELECTED_HALO_STROKE,
         alphaOverride: 0.9,
       })
-      layer.addChild(halo)
+      layer.addChild(haloArrow)
     }
 
     const curve = new Graphics()
@@ -207,8 +288,14 @@ export function drawEdges(
     ;(curve as Graphics & { eventMode?: string }).eventMode = 'none'
     curve.alpha = dimmed ? 0.22 : 1
     drawRoute(curve, points, { ...options, selected, colorOverride: strokeColor })
-    drawArrow(curve, points, { ...options, selected, colorOverride: strokeColor })
     layer.addChild(curve)
+
+    const arrow = new Graphics()
+    arrow.label = `edge-arrow:${edge.id}`
+    ;(arrow as Graphics & { eventMode?: string }).eventMode = 'none'
+    arrow.alpha = dimmed ? 0.22 : 1
+    drawArrow(arrow, points, { ...options, selected, colorOverride: strokeColor })
+    layer.addChild(arrow)
 
     // Wider hit area on top so the curve never blocks pointer events.
     // The hit area is invisible (alpha 0) but still receives Pixi events.
@@ -217,8 +304,7 @@ export function drawEdges(
     ;(hit as Graphics & { eventMode?: string; cursor?: string }).eventMode = 'static'
     ;(hit as Graphics & { eventMode?: string; cursor?: string }).cursor = 'pointer'
     drawRoute(hit, points, { ...options, widthOverride: EDGE_HIT_WIDTH, colorOverride: strokeColor })
-    drawArrow(hit, points, { ...options, widthOverride: EDGE_HIT_WIDTH, colorOverride: strokeColor })
-    hit.alpha = 0.001
+    hit.alpha = 0
     if (options.onEdgeClick) {
       hit.on('pointertap', (event) => {
         options.onEdgeClick?.(edge.id, getPointerModifiers(event))
@@ -280,7 +366,7 @@ export function drawEdges(
         // pointertap events.
         const labelPad = new Graphics()
         labelPad.label = `edge-label-hit:${edge.id}`
-        labelPad.alpha = 0.001
+        labelPad.alpha = 0
         labelPad.rect(label.x - 4, label.y - 2, labelWidth + 8, labelHeight + 4)
         labelPad.fill({ color: 0x000000 })
         ;(labelPad as Graphics & { eventMode?: string; cursor?: string }).eventMode = 'static'
@@ -313,6 +399,33 @@ export function drawEdges(
           meta.eventMode = 'none'
           layer.addChild(meta)
         })
+      }
+
+      const workProductCount = edge.assetSummary?.workProductCount ?? edge.workProductIds?.length ?? 0
+      if (workProductCount > 0) {
+        const chip = new Text({
+          text: `${workProductCount} work products`,
+          style: {
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif',
+            fontSize: 10,
+            fontWeight: '600',
+            fill: selected ? EDGE_SELECTED_STROKE : 0x334155,
+          },
+        })
+        const chipWidth = chip.width + 14
+        const chipHeight = 18
+        const bg = new Graphics()
+        bg.roundRect(labelCenter.x - chipWidth / 2, labelCenter.y - 32, chipWidth, chipHeight, 9)
+        bg.fill(0xeef2ff)
+        bg.stroke({ color: 0xa5b4fc, width: 1 })
+        bg.alpha = dimmed ? 0.22 : 1
+        chip.x = labelCenter.x - chip.width / 2
+        chip.y = labelCenter.y - 30
+        chip.alpha = dimmed ? 0.22 : 1
+        chip.eventMode = 'none'
+        layer.addChild(bg)
+        layer.addChild(chip)
       }
     }
   }

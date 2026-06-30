@@ -127,6 +127,26 @@ export function drawNodes(
       container.addChild(roles)
     }
 
+    if (node.type === 'activity' && node.assetSummary) {
+      const roleSummary = [
+        ...node.assetSummary.responsibleRoles.map((role) => `R:${role}`),
+        ...node.assetSummary.accountableRoles.map((role) => `A:${role}`),
+      ].join(' ')
+      const assetSummary = [
+        node.assetSummary.inputCount > 0 ? `In ${node.assetSummary.inputCount}` : '',
+        node.assetSummary.outputCount > 0 ? `Out ${node.assetSummary.outputCount}` : '',
+        node.assetSummary.guidanceCount > 0 ? `How ${node.assetSummary.guidanceCount}` : '',
+      ].filter(Boolean).join(' · ')
+      const chipText = [roleSummary, assetSummary].filter(Boolean).join(' · ')
+      if (chipText) {
+        drawChip(container, truncateSummaryLine(chipText, 36), 14, Math.max(74, node.height - 26), {
+          bg: 0xf0fdf4,
+          stroke: 0x86efac,
+          text: 0x166534,
+        })
+      }
+    }
+
     if (node.owner && (node.type === 'stage' || node.type === 'decision')) {
       drawChip(container, `Owner · ${node.owner}`, 14, 38, {
         bg: 0xe0ecff,
@@ -183,6 +203,14 @@ export function drawNodes(
         conditionsText.x = 14
         conditionsText.y = node.goal ? (node.owner ? 76 : 54) : (node.owner ? 60 : 38)
         container.addChild(conditionsText)
+      }
+
+      if (node.assetSummary?.milestoneCount) {
+        drawChip(container, `${node.assetSummary.milestoneCount} milestones`, 14, node.height - 28, {
+          bg: 0xfef3c7,
+          stroke: 0xfcd34d,
+          text: 0x92400e,
+        })
       }
     }
 

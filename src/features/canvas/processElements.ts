@@ -117,6 +117,7 @@ export function createGraphNode(
         summary: '',
         expectations: '',
         roleTags: [],
+        responsibilities: [],
         ports: getPortsForNodeType(type),
       }
     case 'decision':

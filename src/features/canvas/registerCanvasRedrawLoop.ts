@@ -94,6 +94,19 @@ export function registerCanvasRedrawLoop(
       titles: nodes.map((n) => `${n.id}:${n.title}`),
       summaries: nodes.map((n) => `${n.id}:${n.summary ?? ''}`),
       roleTags: nodes.map((n) => `${n.id}:${n.roleTags.join(',')}`),
+      responsibilities: nodes.map((n) =>
+        `${n.id}:${(n.responsibilities ?? []).map((r) => `${r.kind}:${r.roleName}`).join('|')}`,
+      ),
+      assetSummaries: nodes.map((n) =>
+        `${n.id}:${n.assetSummary ? [
+          n.assetSummary.responsibleRoles.join(','),
+          n.assetSummary.accountableRoles.join(','),
+          n.assetSummary.inputCount,
+          n.assetSummary.outputCount,
+          n.assetSummary.guidanceCount,
+          n.assetSummary.milestoneCount,
+        ].join('|') : ''}`,
+      ),
       types: nodes.map((n) => `${n.id}:${n.type}`),
       owners: nodes.map((n) => `${n.id}:${'owner' in n ? n.owner ?? '' : ''}`),
       decisionOutcomes: nodes.map((n) => {
@@ -138,7 +151,7 @@ export function registerCanvasRedrawLoop(
         (e) =>
           `${e.id}:${e.fromRole ?? ''}:${e.toRole ?? ''}:${e.artifact ?? ''}:${
             e.readinessSignal ?? ''
-          }:${e.expectation ?? ''}`,
+          }:${e.expectation ?? ''}:${e.workProductIds?.join(',') ?? ''}:${e.assetSummary?.workProductCount ?? 0}`,
       ),
       endpoints: edges.map((e) => {
         const s = nodesByIdRef.current.get(e.sourceNodeId)

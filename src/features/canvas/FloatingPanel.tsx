@@ -13,6 +13,7 @@ interface FloatingPanelProps {
   badge?: ReactNode
   width: number
   defaultPlacement: { top: number; right: number }
+  defaultCollapsed?: boolean
   children: ReactNode
 }
 
@@ -92,15 +93,17 @@ export function FloatingPanel({
   badge,
   width,
   defaultPlacement,
+  defaultCollapsed = false,
   children,
 }: FloatingPanelProps) {
   const storedState = readStoredPanelState(storageKey)
-  const [collapsed, setCollapsed] = useState(storedState?.collapsed ?? false)
+  const initialCollapsed = storedState?.collapsed ?? defaultCollapsed
+  const [collapsed, setCollapsed] = useState(initialCollapsed)
   const [position, setPosition] = useState<FloatingPanelPosition>(() => {
-    const panelWidth = storedState?.collapsed ? COLLAPSED_WIDTH : width
+    const panelWidth = initialCollapsed ? COLLAPSED_WIDTH : width
     return storedState
       ? clampPosition({ x: storedState.x, y: storedState.y }, panelWidth)
-      : getDefaultPosition(width, defaultPlacement)
+      : getDefaultPosition(panelWidth, defaultPlacement)
   })
   const [dragging, setDragging] = useState(false)
   const dragRef = useRef<{

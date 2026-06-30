@@ -409,4 +409,89 @@ describe('useCanvasState', () => {
     expect(result.current.selectedEdgeIds.has(edge.id)).toBe(true)
     expect(result.current.selectedEdge?.data?.expectation).toBe('Context moves with the work.')
   })
+
+  it('updates, links, unlinks, and deletes process assets through asset actions', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.addActivity({ x: 120, y: 160 }))
+    const activity = result.current.nodes.find((node) => node.data.kind === 'activity')!
+    act(() => result.current.addDecision({ x: 420, y: 160 }))
+    const decision = result.current.nodes.find((node) => node.data.kind === 'decision')!
+    act(() => result.current.onConnect(activity.id, decision.id, 'out', 'in'))
+    const edge = result.current.edges[0]
+
+    act(() => result.current.assetActions.createWorkProductForActivity(activity.id, 'output', 'Research brief'))
+    const workProductId = Object.keys(result.current.processAssets.workProducts)[0]
+    act(() => result.current.assetActions.createGuidanceForActivity(activity.id, { title: 'Interview checklist', kind: 'checklist' }))
+    const guidanceId = Object.keys(result.current.processAssets.guidanceItems)[0]
+
+    act(() => result.current.assetActions.updateAsset('workProduct', workProductId, {
+      state: 'Approved',
+      description: 'Ready for delivery',
+    }))
+    act(() => result.current.assetActions.linkAsset('workProduct', workProductId, 'handoff', edge.id))
+    act(() => result.current.assetActions.linkAsset('guidance', guidanceId, 'workProduct', workProductId))
+
+    expect(result.current.processAssets.workProducts[workProductId]).toMatchObject({
+      state: 'Approved',
+      description: 'Ready for delivery',
+      handoffEdgeIds: [edge.id],
+      guidanceIds: [guidanceId],
+    })
+    expect(result.current.processAssets.guidanceItems[guidanceId]?.workProductIds).toEqual([workProductId])
+
+    act(() => result.current.assetActions.unlinkAsset('guidance', guidanceId, 'workProduct', workProductId))
+    expect(result.current.processAssets.workProducts[workProductId]?.guidanceIds).toEqual([])
+
+    act(() => result.current.assetActions.selectAsset('workProduct', workProductId))
+    expect(result.current.selectedAsset).toEqual({ kind: 'workProduct', id: workProductId })
+    expect(result.current.selectedNodeIds.has(activity.id)).toBe(true)
+
+    act(() => result.current.assetActions.deleteAsset('workProduct', workProductId))
+    expect(result.current.processAssets.workProducts[workProductId]).toBeUndefined()
+    expect(result.current.edges[0]?.data?.workProductIds ?? []).toEqual([])
+  })
+
+  it('creates standalone process assets and selects the created asset', () => {
+    const { result } = renderHook(() => useCanvasState())
+
+    act(() => result.current.assetActions.createAsset('workProduct', { title: ' Opportunity brief ' }))
+    const workProduct = Object.values(result.current.processAssets.workProducts)[0]
+    expect(workProduct).toMatchObject({
+      title: 'Opportunity brief',
+      state: 'Draft',
+      description: '',
+      producerNodeIds: [],
+      consumerNodeIds: [],
+      handoffEdgeIds: [],
+      guidanceIds: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'workProduct', id: workProduct.id })
+
+    act(() => result.current.assetActions.createAsset('guidance', { title: 'Delivery template', kind: 'template' }))
+    const guidance = Object.values(result.current.processAssets.guidanceItems)[0]
+    expect(guidance).toMatchObject({
+      title: 'Delivery template',
+      kind: 'template',
+      description: '',
+      url: '',
+      appliesToNodeIds: [],
+      appliesToEdgeIds: [],
+      workProductIds: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'guidance', id: guidance.id })
+
+    act(() => result.current.assetActions.createAsset('milestone', { title: 'Release readiness' }))
+    const milestone = Object.values(result.current.processAssets.milestones)[0]
+    expect(milestone).toMatchObject({
+      title: 'Release readiness',
+      description: '',
+      stageNodeId: null,
+      workProductStates: [],
+    })
+    expect(result.current.selectedAsset).toEqual({ kind: 'milestone', id: milestone.id })
+
+    act(() => result.current.assetActions.createAsset('workProduct', { title: '   ' }))
+    expect(Object.keys(result.current.processAssets.workProducts)).toHaveLength(1)
+  })
 })

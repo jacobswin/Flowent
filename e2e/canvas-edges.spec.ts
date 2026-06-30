@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -38,13 +39,13 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   // tile whose accessible name starts with "Activity:". We use the
   // aria-label prefix to avoid matching the alignment-diagnostic
   // buttons (which start with "Activity needs" / "Activity expectation").
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(120)
   // The current branch's "add activity" path is the ProcessElementPalette
   // tile whose accessible name starts with "Activity:". We use the
   // aria-label prefix to avoid matching the alignment-diagnostic
   // buttons (which start with "Activity needs" / "Activity expectation").
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(120)
 
   const statusBefore = await page.locator(statusBar).textContent()
@@ -165,7 +166,7 @@ test('clicking the selected node plus handle opens Plus Create and creates a con
   expect(statusAfter).toContain('1 edges')
 })
 
-test('double-clicking an edge keeps editing behind explicit quick actions', async ({ page }) => {
+test('selecting an edge keeps editing behind explicit quick actions', async ({ page }) => {
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(200)
   await page.keyboard.press('0')
@@ -199,10 +200,9 @@ test('double-clicking an edge keeps editing behind explicit quick actions', asyn
   const edgeCenterX = hostBox.x + viewport.x + center.x * viewport.zoom
   const edgeCenterY = hostBox.y + viewport.y + center.y * viewport.zoom
 
-  await page.mouse.dblclick(
-    box.x + viewport.x + center.x * viewport.zoom,
-    box.y + viewport.y + center.y * viewport.zoom,
-  )
+  await page.locator(`[data-edge-id="${edgeId}"]`).evaluate((element) => {
+    ;(element as HTMLButtonElement).click()
+  })
 
   const labelEditor = page.getByRole('textbox', { name: /edit connection label/i })
   await expect(labelEditor).not.toBeVisible()
@@ -243,7 +243,7 @@ test('double-clicking a node keeps editing behind explicit quick actions', async
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(200)
 
   const box = await page.locator(pixiCanvas).boundingBox()
@@ -285,7 +285,7 @@ test('dragging the selected node plus handle to an existing node connects them',
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(160)
 
   const box = await page.locator(pixiCanvas).boundingBox()

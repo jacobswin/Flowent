@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { expandDockPanel } from './canvasDockHelpers'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -21,10 +22,19 @@ test('canvas loads with toolbar and title', async ({ page }) => {
 })
 
 test('toolbar exposes the primary actions', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Expand Elements' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand Alignment checklist' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand Process assets' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand Focus view' })).toBeVisible()
+  await expect(page.locator('button[aria-label^="Activity:"]')).toHaveCount(0)
+  await expandDockPanel(page, 'Elements')
   await expect(page.locator('button[aria-label^="Activity:"]')).toBeVisible()
   await expect(page.locator('button[aria-label^="Decision:"]')).toBeVisible()
   await expect(page.locator('button[aria-label^="End:"]')).toBeVisible()
   await expect(page.locator('button:has-text("Layout")')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Zoom out' })).toBeVisible()
 })
 
 test('clicking toolbar button does not crash', async ({ page }) => {

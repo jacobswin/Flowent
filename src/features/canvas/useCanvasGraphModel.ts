@@ -39,6 +39,8 @@ export function useCanvasGraphModel(args: UseCanvasGraphModelArgs): CanvasGraphM
           readinessSignal: edge.data?.readinessSignal ?? '',
           expectation: edge.data?.expectation ?? '',
           reviewStatus: edge.data?.reviewStatus,
+          workProductIds: edge.data?.workProductIds ?? [],
+          assetSummary: edge.data?.assetSummary,
         })),
     [edges],
   )

@@ -1,5 +1,5 @@
 import type { DragEventHandler, RefObject } from 'react'
-import type { ConnectionCreateRequest, GraphNode, ProcessEdge, ProcessNode } from './canvasTypes'
+import type { ConnectionCreateRequest, GraphDocument, GraphNode, GuidanceKind, ProcessAssets, ProcessEdge, ProcessNode } from './canvasTypes'
 import type { EdgeLabelEditorApi } from './useEdgeLabelEditor'
 import type { ProcessFocusState } from './focus/processFocus'
 import type { ProcessMapDiagnostic } from './diagnostics/processMapDiagnostics'
@@ -12,18 +12,35 @@ import { FocusBar } from './FocusBar'
 import { AlignmentChecklist } from './AlignmentChecklist'
 import { ActivationBar } from './ActivationBar'
 import { PropertiesPanel } from './PropertiesPanel'
+import type { PropertiesPanelAssetActions } from './PropertiesPanel'
+import { ProcessAssetsPanel } from './ProcessAssetsPanel'
+
+type ProcessAssetKind = 'workProduct' | 'guidance' | 'milestone'
+type ProcessAssetRelation =
+  | 'producer'
+  | 'consumer'
+  | 'handoff'
+  | 'guidance'
+  | 'node'
+  | 'edge'
+  | 'workProduct'
+  | 'stage'
+  | 'workProductState'
+type ProcessAssetRelationOptions = { maturity?: string }
 
 interface CanvasChromeToolbarModel {
-  onToggleConnector: () => void
   onRemove: () => void
   onAutoLayout: () => void
   onUndo: () => void
   onRedo: () => void
   onExport: () => void
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onZoomReset: () => void
   canUndo: boolean
   canRedo: boolean
   hasSelection: boolean
-  connectorMode: boolean
+  zoomPercent: number
 }
 
 interface CanvasChromeOverlayModel {
@@ -81,10 +98,25 @@ interface CanvasChromePropertiesModel {
   node: ProcessNode | null
   edge: ProcessEdge | null
   nodes: ProcessNode[]
+  processAssets: ProcessAssets
+  assetActions: PropertiesPanelAssetActions
   onUpdateNode: (nodeId: string, data: Record<string, unknown>) => void
   onUpdateEdge: (edgeId: string, data: Record<string, unknown>) => void
   onDeleteEdge: () => void
   onClose: () => void
+}
+
+interface CanvasChromeProcessAssetsModel {
+  document: GraphDocument
+  selectedAsset: { kind: ProcessAssetKind; id: string } | null
+  onSelectAsset: (kind: ProcessAssetKind, id: string) => void
+  onCreateAsset: (kind: ProcessAssetKind, data: { title: string; kind?: GuidanceKind }) => void
+  onRenameAsset: (kind: ProcessAssetKind, id: string, title: string) => void
+  onDeleteAsset: (kind: ProcessAssetKind, id: string) => void
+  onUpdateAsset: (kind: ProcessAssetKind, id: string, patch: Record<string, unknown>) => void
+  onLinkAsset: (kind: ProcessAssetKind, id: string, relation: ProcessAssetRelation, targetId: string, options?: ProcessAssetRelationOptions) => void
+  onUnlinkAsset: (kind: ProcessAssetKind, id: string, relation: ProcessAssetRelation, targetId: string, options?: ProcessAssetRelationOptions) => void
+  onSelectObjectTarget: (type: 'node' | 'edge', id: string) => void
 }
 
 export interface CanvasChromeProps {
@@ -97,6 +129,7 @@ export interface CanvasChromeProps {
   focusBar: CanvasChromeFocusModel
   checklist: CanvasChromeChecklistModel
   activationBar: CanvasChromeActivationModel
+  processAssets: CanvasChromeProcessAssetsModel
   statusBar: CanvasChromeStatusModel
   propertiesPanel: CanvasChromePropertiesModel
 }
@@ -111,6 +144,7 @@ export function CanvasChrome({
   focusBar,
   checklist,
   activationBar,
+  processAssets,
   statusBar,
   propertiesPanel,
 }: CanvasChromeProps) {
@@ -122,19 +156,40 @@ export function CanvasChrome({
       </div>
 
       <Toolbar
-        onToggleConnector={toolbar.onToggleConnector}
         onRemove={toolbar.onRemove}
         onAutoLayout={toolbar.onAutoLayout}
         onUndo={toolbar.onUndo}
         onRedo={toolbar.onRedo}
         onExport={toolbar.onExport}
+        onZoomIn={toolbar.onZoomIn}
+        onZoomOut={toolbar.onZoomOut}
+        onZoomReset={toolbar.onZoomReset}
         canUndo={toolbar.canUndo}
         canRedo={toolbar.canRedo}
         hasSelection={toolbar.hasSelection}
-        connectorMode={toolbar.connectorMode}
+        zoomPercent={toolbar.zoomPercent}
       />
 
-      <ProcessElementPalette onQuickCreate={onQuickCreate} />
+      <div className="canvas-top-dock" aria-label="Canvas control panels">
+        <ProcessElementPalette onQuickCreate={onQuickCreate} />
+        <AlignmentChecklist
+          diagnostics={checklist.diagnostics}
+          onSelectDiagnostic={checklist.onSelectDiagnostic}
+        />
+        <ProcessAssetsPanel
+          document={processAssets.document}
+          selectedAsset={processAssets.selectedAsset}
+          onSelectAsset={processAssets.onSelectAsset}
+          onCreateAsset={processAssets.onCreateAsset}
+          onRenameAsset={processAssets.onRenameAsset}
+          onDeleteAsset={processAssets.onDeleteAsset}
+          onUpdateAsset={processAssets.onUpdateAsset}
+          onLinkAsset={processAssets.onLinkAsset}
+          onUnlinkAsset={processAssets.onUnlinkAsset}
+          onSelectObjectTarget={processAssets.onSelectObjectTarget}
+        />
+        <FocusBar focus={focusBar.focus} roles={focusBar.roles} onChange={focusBar.onChange} />
+      </div>
 
       <div
         ref={hostRef}
@@ -170,13 +225,6 @@ export function CanvasChrome({
         nodesById={overlays.nodesById}
       />
 
-      <FocusBar focus={focusBar.focus} roles={focusBar.roles} onChange={focusBar.onChange} />
-
-      <AlignmentChecklist
-        diagnostics={checklist.diagnostics}
-        onSelectDiagnostic={checklist.onSelectDiagnostic}
-      />
-
       <ActivationBar
         activation={activationBar.activation}
         eligible={activationBar.eligible}
@@ -184,16 +232,6 @@ export function CanvasChrome({
         bottlenecks={activationBar.bottlenecks}
         onActivate={activationBar.onActivate}
       />
-
-      <div className="keyboard-hint" aria-hidden="true">
-        <span><kbd>A</kbd> Activity</span>
-        <span><kbd>D</kbd> Decision</span>
-        <span><kbd>L</kbd> Layout</span>
-        <span><kbd>⌘Z</kbd> Undo</span>
-        <span>Drag Pan</span>
-        <span><kbd>Shift</kbd>+Drag Select</span>
-        <span><kbd>+</kbd><kbd>-</kbd> Zoom</span>
-      </div>
 
       <div className="status-bar" aria-live="polite">
         <span>{statusBar.nodeCount} nodes</span>
@@ -213,6 +251,8 @@ export function CanvasChrome({
         node={propertiesPanel.node}
         edge={propertiesPanel.edge}
         nodes={propertiesPanel.nodes}
+        processAssets={propertiesPanel.processAssets}
+        assetActions={propertiesPanel.assetActions}
         onUpdateNode={propertiesPanel.onUpdateNode}
         onUpdateEdge={propertiesPanel.onUpdateEdge}
         onDeleteEdge={propertiesPanel.onDeleteEdge}

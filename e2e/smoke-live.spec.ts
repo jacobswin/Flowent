@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -78,7 +79,7 @@ test('LIVE: page loads against the dev server', async ({ page }) => {
   console.log('[start drag]', startBefore, '→', startAfter)
 
   // 2. add an activity, then drag it
-  await page.locator('button:has-text("Activity")').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
   const afterAdd = await page.locator(statusBar).textContent()
   console.log('[after add]', afterAdd)

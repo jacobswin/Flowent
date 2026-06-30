@@ -1,46 +1,36 @@
 import type { useCanvasState } from './useCanvasState'
 
 interface ToolbarProps {
-  onToggleConnector: ReturnType<typeof useCanvasState>['toggleConnectorMode']
   onRemove: ReturnType<typeof useCanvasState>['removeSelected']
   onAutoLayout: () => void
   onUndo: () => void
   onRedo: () => void
   onExport: () => void
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onZoomReset: () => void
   canUndo: boolean
   canRedo: boolean
   hasSelection: boolean
-  connectorMode: boolean
+  zoomPercent: number
 }
 
 export function Toolbar({
-  onToggleConnector,
   onRemove,
   onAutoLayout,
   onUndo,
   onRedo,
   onExport,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
   canUndo,
   canRedo,
   hasSelection,
-  connectorMode,
+  zoomPercent,
 }: ToolbarProps) {
   return (
     <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
-      <button
-        type="button"
-        className={`toolbar-button ${connectorMode ? 'active' : ''}`}
-        onClick={onToggleConnector}
-        title="Connect: click two nodes or ports (C)"
-      >
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
-          <circle cx="14" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
-          <line x1="6" y1="9" x2="12" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-        <span>Connect</span>
-      </button>
-      <div className="toolbar-divider" />
       <button
         type="button"
         className="toolbar-button"
@@ -91,6 +81,18 @@ export function Toolbar({
         </svg>
         <span>Export</span>
       </button>
+      <div className="toolbar-divider" />
+      <div className="toolbar-zoom" aria-label="Zoom controls">
+        <button type="button" className="toolbar-button toolbar-icon-button" onClick={onZoomOut} title="Zoom out" aria-label="Zoom out">
+          -
+        </button>
+        <button type="button" className="toolbar-zoom-reset" onClick={onZoomReset} title="Reset zoom to 100%">
+          {zoomPercent}%
+        </button>
+        <button type="button" className="toolbar-button toolbar-icon-button" onClick={onZoomIn} title="Zoom in" aria-label="Zoom in">
+          +
+        </button>
+      </div>
       {hasSelection && (
         <>
           <div className="toolbar-divider" />

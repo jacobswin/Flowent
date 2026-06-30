@@ -6,9 +6,38 @@
  *   3. Activity ports are subtle by default, fade in on hover.
  */
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
+
+async function getNodeScreenPoint(
+  page: import('@playwright/test').Page,
+  nodeId: string,
+  anchor: 'center' | 'in' | 'out',
+) {
+  const target = await page.evaluate((id) => {
+    const bounds = (window as unknown as {
+      __flowentGetNodeBounds?: (nodeId: string) => { x: number; y: number; width: number; height: number } | null
+    }).__flowentGetNodeBounds?.(id)
+    const viewport = (window as unknown as { __flowentGetViewport?: () => { x: number; y: number; zoom: number } | null }).__flowentGetViewport?.()
+    return bounds && viewport ? { bounds, viewport } : null
+  }, nodeId)
+  expect(target, `${nodeId} should have screen bounds`).toBeTruthy()
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no canvas')
+  const localX = anchor === 'in' ? 0 : anchor === 'out' ? target!.bounds.width : target!.bounds.width / 2
+  const localY = target!.bounds.height / 2
+  return {
+    x: box.x + (target!.bounds.x + localX) * target!.viewport.zoom + target!.viewport.x,
+    y: box.y + (target!.bounds.y + localY) * target!.viewport.zoom + target!.viewport.y,
+  }
+}
+
+async function focusNodeSelection(page: import('@playwright/test').Page, nodeId: string) {
+  await page.locator(`[data-node-id="${nodeId}"]`).focus()
+  await page.waitForTimeout(150)
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -35,7 +64,7 @@ test.beforeEach(async ({ page }) => {
 
 test('fix-1: edge re-renders when a connected node moves', async ({ page }) => {
   // Add an activity, then connect it to start via the test API.
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
 
   const activityId = await page.evaluate(() => {
@@ -95,11 +124,13 @@ test('fix-1: edge re-renders when a connected node moves', async ({ page }) => {
 })
 
 test('fix-2: two activities can be connected via the test API and via clicking two ports', async ({ page }) => {
-  // Add two activities. quickCreate only auto-edges the first one
-  // to the start, so the second activity starts disconnected.
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+  // Add two activities. Select Start before the second quick-create
+  // so the activities land at distinct positions and are not already
+  // connected to each other.
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await focusNodeSelection(page, 'start')
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
 
   const ids = await page.evaluate(() => {
@@ -127,33 +158,26 @@ test('fix-2: two activities can be connected via the test API and via clicking t
   const afterCount = Number(afterMatch?.[1] ?? '0')
   expect(afterCount, 'edge count should grow by 1').toBe(beforeCount + 1)
 
-  // Path 2: clicking two port hit-areas. This is the new
-  // click-to-connect gesture (no Connect-mode toggle required).
-  // We click the out port of activity 1 and the in port of
-  // activity 2, which is a left→right handoff — the canonical
-  // process-map edge.
-  const positions = await page.evaluate(() => {
-    return (window as unknown as { __flowentGetNodePositions?: () => Record<string, { x: number; y: number }> }).__flowentGetNodePositions?.() ?? {}
-  })
-  const activityIds = Object.keys(positions).filter((k) => k.startsWith('activity-'))
-  const a1 = positions[activityIds[0]]
-  const a2 = positions[activityIds[1]]
-  const box = await page.locator(pixiCanvas).boundingBox()
-  if (!box) throw new Error('no canvas')
-
+  // Path 2: dragging from one endpoint to another endpoint. A plain
+  // click on the right endpoint opens the Add next menu, so the free
+  // existing-node connection gesture is a short drag.
   const beforeClick2 = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
-  await page.mouse.click(box.x + a1.x + 220, box.y + a1.y + 48)
-  await page.waitForTimeout(300)
-  await page.mouse.click(box.x + a2.x, box.y + a2.y + 48)
+  const reverseSource = await getNodeScreenPoint(page, ids[1], 'out')
+  const reverseTarget = await getNodeScreenPoint(page, ids[0], 'in')
+  await page.mouse.move(reverseSource.x, reverseSource.y)
+  await page.mouse.down()
+  await page.mouse.move(reverseTarget.x, reverseTarget.y, { steps: 8 })
+  await page.mouse.up()
   await page.waitForTimeout(500)
   const afterClick2 = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
   expect(afterClick2, 'click-to-connect should add 1 more edge').toBe(beforeClick2 + 1)
 })
 
-test('connect mode connects two node bodies without precise port targeting', async ({ page }) => {
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+test('keyboard connect mode connects two node bodies without precise port targeting', async ({ page }) => {
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await focusNodeSelection(page, 'start')
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
 
   const positions = await page.evaluate(() => {
@@ -162,18 +186,15 @@ test('connect mode connects two node bodies without precise port targeting', asy
   const activityIds = Object.keys(positions).filter((k) => k.startsWith('activity-'))
   expect(activityIds.length, 'two activities should exist').toBe(2)
 
-  const box = await page.locator(pixiCanvas).boundingBox()
-  if (!box) throw new Error('no canvas')
-
   const before = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
-  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await page.keyboard.press('c')
   await page.waitForTimeout(100)
 
-  const source = positions[activityIds[0]]
-  const target = positions[activityIds[1]]
-  await page.mouse.click(box.x + source.x + 60, box.y + source.y + 60)
+  const source = await getNodeScreenPoint(page, activityIds[0], 'center')
+  const target = await getNodeScreenPoint(page, activityIds[1], 'center')
+  await page.mouse.click(source.x, source.y)
   await page.waitForTimeout(200)
-  await page.mouse.click(box.x + target.x + 60, box.y + target.y + 60)
+  await page.mouse.click(target.x, target.y)
   await page.waitForTimeout(500)
 
   const after = Number((await page.locator(statusBar).textContent())?.match(/(\d+) edges/)?.[1] ?? '0')
@@ -182,7 +203,7 @@ test('connect mode connects two node bodies without precise port targeting', asy
 
 test('fix-3: activity ports are subtle by default, fade in on hover', async ({ page }) => {
   // Add an activity so we have something to inspect.
-  await page.locator('button[aria-label^="Activity:"]').first().click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(800)
 
   // Read port alphas on the activity node. Pixi v8 stores them as

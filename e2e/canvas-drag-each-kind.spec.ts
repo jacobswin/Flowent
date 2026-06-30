@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -71,7 +72,7 @@ test('activity node can be dragged', async ({ page }) => {
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button:has-text("Activity")').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
 
   const statusBefore = await page.locator(statusBar).textContent()
@@ -98,7 +99,7 @@ test('decision node can be dragged', async ({ page }) => {
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button[aria-label^="Decision:"]').click()
+  await clickPaletteElement(page, 'Decision')
   await page.waitForTimeout(150)
 
   const box = await page.locator(pixiCanvas).boundingBox()
@@ -115,7 +116,7 @@ test('end node can be dragged', async ({ page }) => {
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button:has-text("End")').click()
+  await clickPaletteElement(page, 'End')
   await page.waitForTimeout(150)
 
   // Click an empty area first to deselect, then find the end node by

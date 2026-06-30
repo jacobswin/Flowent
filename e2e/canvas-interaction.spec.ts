@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clickPaletteElement } from './canvasDockHelpers'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -27,7 +28,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 
   // Add an activity and reset zoom for predictable math. Library gate
   // seeds a "Welcome" map with 1 start node, so the total is now 2.
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
@@ -62,7 +63,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 
   // Re-add an activity and verify positions differ: if the drag worked, the original
   // activity no longer overlaps the new one we drop at the default 300,220.
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
   const statusFinal = await page.locator(statusBar).textContent()
   expect(statusFinal).toContain('3 nodes')
@@ -140,9 +141,9 @@ test('a mistaken connector can be rerouted from the edge properties panel', asyn
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(250)
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(250)
 
   const activityIds = await page.evaluate(() => {
@@ -160,6 +161,8 @@ test('a mistaken connector can be rerouted from the edge properties panel', asyn
   await page.locator(`[data-edge-id="${edgeId}"]`).evaluate((element) => {
     ;(element as HTMLButtonElement).click()
   })
+  await expect(page.getByRole('toolbar', { name: 'Connection quick actions' })).toBeVisible()
+  await page.getByRole('toolbar', { name: 'Connection quick actions' }).getByRole('button', { name: 'Edit connection' }).click()
   await expect(page.getByRole('complementary', { name: 'Properties' })).toBeVisible()
 
   await page.getByLabel('To node').selectOption(correctTargetId)
@@ -191,7 +194,7 @@ test('a selected connector can be deleted from the on-canvas action pill', async
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
 
-  await page.locator('button[aria-label^="Activity:"]').click()
+  await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(250)
 
   const activityId = await page.evaluate(() => {

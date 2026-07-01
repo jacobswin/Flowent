@@ -16,6 +16,10 @@ export default defineConfig({
     include: ['pixi.js', 'react', 'react-dom', 'react-dom/client'],
   },
   build: {
+    // The lazy Pixi vendor chunk sits just above Vite's 500 kB default
+    // after minification. Keep the warning threshold close enough to catch
+    // real growth while avoiding noise for the intentionally isolated chunk.
+    chunkSizeWarningLimit: 600,
     // Split React into a separate chunk so it isn't redownloaded when
     // the PIXI/lazy chunk changes. PIXI is already split via the
     // React.lazy boundary in App.tsx.

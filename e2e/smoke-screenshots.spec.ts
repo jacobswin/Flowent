@@ -32,7 +32,7 @@ test.beforeEach(async ({ page }) => {
   await page.reload()
 })
 
-test('LIVE: take screenshots of the canvas in several states', async ({ page }) => {
+test('preview screenshots capture the canvas in several states', async ({ page }) => {
   page.on('pageerror', (err) => console.log('[pageerror]', err.message))
 
   await page.goto('/')

@@ -48,7 +48,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(1500)
 })
 
-test('LIVE: page loads against the dev server', async ({ page }) => {
+test('preview page loads against the isolated server', async ({ page }) => {
   page.on('pageerror', (err) => console.log('[pageerror]', err.message))
   page.on('console', (msg) => {
     if (msg.type() === 'error') console.log('[console.error]', msg.text())

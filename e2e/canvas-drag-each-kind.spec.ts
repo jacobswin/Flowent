@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -44,7 +45,7 @@ async function dragNode(
 }
 
 test('start node can be dragged', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   // page.goto runs in beforeEach
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)

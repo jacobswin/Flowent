@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -49,10 +50,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('preview page loads against the isolated server', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') console.log('[console.error]', msg.text())
-  })
+  attachPageDiagnostics(page, { consoleErrors: true })
 
   await page.keyboard.press('0')
   await page.waitForTimeout(80)

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -22,7 +23,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('nodes can be dragged with the pointer', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(300)
 
@@ -78,7 +79,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 })
 
 test('mouse wheel zooms the canvas', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
 
@@ -105,7 +106,7 @@ test('mouse wheel zooms the canvas', async ({ page }) => {
 })
 
 test('dragging empty whiteboard pans the viewport with the mouse', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -135,7 +136,7 @@ test('dragging empty whiteboard pans the viewport with the mouse', async ({ page
 })
 
 test('a mistaken connector can be rerouted from the edge properties panel', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -188,7 +189,7 @@ test('a mistaken connector can be rerouted from the edge properties panel', asyn
 })
 
 test('a selected connector can be deleted from the on-canvas action pill', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -224,7 +225,7 @@ test('a selected connector can be deleted from the on-canvas action pill', async
 })
 
 test('keyboard zoom-in still works after fixes', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
 

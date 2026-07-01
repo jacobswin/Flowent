@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 
@@ -33,7 +34,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('preview screenshots capture the canvas in several states', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
 
   await page.goto('/')
   await page.waitForSelector(pixiCanvas)

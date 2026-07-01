@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -19,11 +20,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('connecting two activities via ports produces an edge', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.text().includes('[port-down]') || msg.text().includes('[bind-port]'))
-      console.log('[console]', msg.type(), msg.text())
-  })
+  attachPageDiagnostics(page, { consoleErrors: true, consoleIncludes: ['[port-down]', '[bind-port]'] })
 
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(200)
@@ -103,7 +100,7 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
 })
 
 test('dragging from a right-side endpoint to blank canvas opens a type picker and creates a connected node', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(200)
   await page.keyboard.press('0')

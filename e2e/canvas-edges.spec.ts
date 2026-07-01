@@ -49,7 +49,6 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   await page.waitForTimeout(120)
 
   const statusBefore = await page.locator(statusBar).textContent()
-  console.log('[status-before]', statusBefore)
   expect(statusBefore).toContain('3 nodes')
   // The current branch auto-connects one of the new activities to
   // start via quickCreate, so we may already have 1 edge before
@@ -83,9 +82,8 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   const inX = box.x + activityPosition.x
   const inY = box.y + activityPosition.y + 48
 
-  // Log status before drag to see where the nodes actually are on screen.
   const sbBefore = await page.locator(statusBar).textContent()
-  console.log('[before-drag]', sbBefore)
+  expect(sbBefore).toContain('3 nodes')
 
   await page.mouse.move(outX, outY)
   await page.mouse.down()
@@ -98,7 +96,6 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   await page.waitForTimeout(250)
 
   const statusAfter = await page.locator(statusBar).textContent()
-  console.log('[status-after]', statusAfter)
 
   expect(statusAfter).toContain('3 nodes')
   const edgeCountAfter = Number(statusAfter?.match(/(\d+) edges/)?.[1] ?? 0)

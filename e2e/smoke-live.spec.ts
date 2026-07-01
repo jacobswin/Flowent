@@ -76,13 +76,11 @@ test('LIVE: page loads against the dev server', async ({ page }) => {
 
   const startAfter = await pos('start')
   expect(startAfter!.y).toBeGreaterThan(startBefore!.y)
-  console.log('[start drag]', startBefore, '→', startAfter)
 
   // 2. add an activity, then drag it
   await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
   const afterAdd = await page.locator(statusBar).textContent()
-  console.log('[after add]', afterAdd)
   expect(afterAdd).toContain('2 nodes')
 
   // Activity default is (300, 220) size 220x96 → mid (410, 268).

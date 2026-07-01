@@ -56,7 +56,6 @@ test('LIVE: take screenshots of the canvas in several states', async ({ page }) 
   await page.waitForTimeout(300)
   await page.screenshot({ path: 'test-results/03-laid-out.png', fullPage: true })
   const beforeEdge = await page.locator('.status-bar').textContent()
-  console.log('[status before edge]', beforeEdge)
 
   // Connect start to the first activity via the public test API
   // instead of a real port drag. The smoke test is meant to
@@ -83,7 +82,6 @@ test('LIVE: take screenshots of the canvas in several states', async ({ page }) 
   // addEdge bumped the count by one.
   const beforeCount = Number(beforeEdge?.match(/(\d+) edges/)?.[1] ?? '0')
   const afterStatus = await page.locator('.status-bar').textContent()
-  console.log('[status after edge]', afterStatus)
   const afterCount = Number(afterStatus?.match(/(\d+) edges/)?.[1] ?? '0')
   expect(afterCount).toBe(beforeCount + 1)
 })

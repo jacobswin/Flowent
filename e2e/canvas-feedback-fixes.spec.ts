@@ -143,7 +143,6 @@ test('fix-2: two activities can be connected via the test API and via clicking t
   const statusBefore = await page.locator(statusBar).textContent()
   const beforeMatch = statusBefore?.match(/(\d+) edges/)
   const beforeCount = Number(beforeMatch?.[1] ?? '0')
-  console.log('[before edges]', beforeCount)
 
   // Path 1: the test API. Used by tests that want to skip the
   // UI and exercise the connect logic deterministically.
@@ -231,7 +230,6 @@ test('fix-3: activity ports are subtle by default, fade in on hover', async ({ p
     walk(app.stage, 0, results)
     return results
   })
-  console.log('[port alphas at rest]', JSON.stringify(initial))
   expect(initial, 'should have found port circles').toBeTruthy()
   // The port circles start at a low alpha (subtle resting state)
   // so the canvas doesn't feel busy. The per-frame redraw pass

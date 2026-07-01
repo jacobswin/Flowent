@@ -1,22 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { resetLibrary } from './canvasDockHelpers'
 
 const libraryPanel = '.library-panel'
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await page.evaluate(async () => {
-    try { localStorage.clear() } catch { /* noop */ }
-    history.replaceState(null, '', '/')
-    const res = await fetch('/api/library')
-    const body = (await res.json()) as { data: { maps: { id: string }[]; folders: { id: string }[] } }
-    for (const m of body.data.maps) {
-      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
-    }
-    for (const f of body.data.folders) {
-      await fetch(`/api/library/folders/${f.id}`, { method: 'DELETE' })
-    }
-  })
-  await page.reload()
+  await resetLibrary(page)
 })
 
 test('library renders a Welcome starter map on first load', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clickPaletteElement } from './canvasDockHelpers'
+import { clickPaletteElement, resetLibrary } from './canvasDockHelpers'
 import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
@@ -8,17 +8,7 @@ const statusBar = '.status-bar'
 test.beforeEach(async ({ page }) => {
   // Reset the library so the Welcome map has a single start node, not
   // whatever the previous test left behind.
-  await page.goto('/')
-  await page.evaluate(async () => {
-    try { localStorage.clear() } catch { /* noop */ }
-    history.replaceState(null, '', '/')
-    const res = await fetch('/api/library')
-    const body = (await res.json()) as { data: { maps: { id: string }[] } }
-    for (const m of body.data.maps) {
-      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
-    }
-  })
-  await page.reload()
+  await resetLibrary(page)
 })
 
 const getPos = (page: import('@playwright/test').Page) =>

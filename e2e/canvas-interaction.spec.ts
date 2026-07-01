@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clickPaletteElement } from './canvasDockHelpers'
+import { clickPaletteElement, resetLibrary } from './canvasDockHelpers'
 import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
@@ -8,18 +8,8 @@ const statusBar = '.status-bar'
 test.beforeEach(async ({ page }) => {
   // Each test starts with a fresh Welcome map so node counts are
   // deterministic regardless of what previous tests left behind.
-  await page.goto('/')
-  await page.evaluate(async () => {
-    try { localStorage.clear() } catch { /* noop */ }
-    history.replaceState(null, '', '/')
-    const res = await fetch('/api/library')
-    const body = (await res.json()) as { data: { maps: { id: string }[] } }
-    for (const m of body.data.maps) {
-      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
-    }
-  })
   // Reload so the gate creates a fresh "Welcome" and picks it as active
-  await page.reload()
+  await resetLibrary(page)
 })
 
 test('nodes can be dragged with the pointer', async ({ page }) => {

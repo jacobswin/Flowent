@@ -1,11 +1,13 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
+const apiPort = process.env.FLOWENT_API_PORT ?? '8787'
+
 export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:8787',
+      '/api': `http://127.0.0.1:${apiPort}`,
     },
   },
   // Pre-bundle heavy deps in dev so the browser doesn't have to fetch

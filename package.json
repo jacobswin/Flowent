@@ -7,6 +7,8 @@
     "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "vite",
     "dev:api": "tsx watch server/index.ts",
+    "setup:git-hooks": "git config core.hooksPath .githooks",
+    "check:readme": "node scripts/check-readme-before-push.mjs --current",
     "build": "tsc -b && vite build",
     "preview": "concurrently \"vite preview --host 127.0.0.1 --port 5173 --strictPort\" \"tsx server/index.ts\"",
     "lint": "eslint .",

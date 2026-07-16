@@ -34,6 +34,23 @@ describe('libraryStore', () => {
     const lib = await loadLibrary(file)
     expect(lib.folders).toEqual([])
     expect(lib.maps).toEqual([])
+    expect(lib.aiSettings).toEqual({ providers: [], defaultProviderId: null })
+  })
+
+  it('migrates old libraries without aiSettings to an empty provider config', async () => {
+    writeFileSync(file, JSON.stringify({ folders: [], maps: [], comments: {} }), 'utf8')
+
+    const lib = await loadLibrary(file)
+
+    expect(lib.aiSettings).toEqual({ providers: [], defaultProviderId: null })
+  })
+
+  it('migrates old libraries to an empty shared element library', async () => {
+    writeFileSync(file, JSON.stringify({ folders: [], maps: [], comments: {}, aiSettings: { providers: [], defaultProviderId: null } }), 'utf8')
+
+    const lib = await loadLibrary(file)
+
+    expect(lib.elementLibrary).toEqual({ roles: {}, workProducts: {}, activities: {}, processes: {} })
   })
 
   it('round-trips an empty library', async () => {
@@ -165,6 +182,111 @@ describe('libraryStore', () => {
       { id: 'link-1', nodeId: 'a1', relation: 'input', maturity: 'Draft' },
       { id: 'link-2', nodeId: 'a1', relation: 'output', maturity: 'Approved' },
     ])
+  })
+
+  it('preserves generated layout metadata and edge anchors in map documents', async () => {
+    let lib = createEmptyLibrary()
+    lib = addMap(lib, { id: 'm1', name: 'Generated', folderId: null, order: 0 })
+    const doc = {
+      id: 'm1',
+      nodes: {
+        a1: {
+          id: 'a1',
+          type: 'activity' as const,
+          x: 0,
+          y: 0,
+          width: 220,
+          height: 112,
+          title: 'Activity',
+          roleTags: [],
+          ports: [{ id: 'bottom', side: 'bottom' as const }],
+        },
+        d1: {
+          id: 'd1',
+          type: 'decision' as const,
+          x: 0,
+          y: 220,
+          width: 172,
+          height: 132,
+          title: 'Decision',
+          roleTags: [],
+          ports: [{ id: 'top', side: 'top' as const }],
+        },
+      },
+      edges: {
+        e1: {
+          id: 'e1',
+          sourceNodeId: 'a1',
+          sourcePortId: 'bottom',
+          sourceAnchor: { side: 'bottom' as const, offset: 0.5 },
+          targetNodeId: 'd1',
+          targetPortId: 'top',
+          targetAnchor: { side: 'top' as const, offset: 0.5 },
+          label: '',
+          kind: 'handoff' as const,
+        },
+      },
+      processAssets: { workProducts: {}, guidanceItems: {}, milestones: {} },
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      meta: {
+        dirty: false,
+        version: 3,
+        layoutProfile: 'generated-flow' as const,
+        layoutNodeOrder: ['a1', 'd1'],
+      },
+    }
+    lib = setMapDocument(lib, 'm1', doc as never)
+
+    await saveLibrary(file, lib)
+    const loaded = await loadLibrary(file)
+
+    expect(loaded.maps[0].document?.meta).toMatchObject({
+      layoutProfile: 'generated-flow',
+      layoutNodeOrder: ['a1', 'd1'],
+    })
+    expect(loaded.maps[0].document?.edges.e1).toMatchObject({
+      sourceAnchor: { side: 'bottom', offset: 0.5 },
+      targetAnchor: { side: 'top', offset: 0.5 },
+    })
+  })
+
+  it('persists process intelligence stage data and map settings', async () => {
+    let lib = createEmptyLibrary()
+    lib = addMap(lib, { id: 'm1', name: 'Measured process', folderId: null, order: 0 })
+    const doc = {
+      id: 'm1',
+      nodes: {
+        a1: {
+          id: 'a1', type: 'activity' as const, x: 0, y: 0, width: 220, height: 112,
+          title: 'Review brief', roleTags: [], ports: [],
+          processStage: {
+            kind: 'wait' as const,
+            durationMinutesP50: 45,
+            durationMinutesP90: 120,
+            classificationSource: 'explicit' as const,
+          },
+        },
+      },
+      edges: {},
+      processAssets: { workProducts: {}, guidanceItems: {}, milestones: {} },
+      selectedNodeIds: [], selectedEdgeIds: [], viewport: { x: 0, y: 0, zoom: 1 },
+      meta: { dirty: false, version: 1, processAnalysis: { profile: 'automotive' as const, wip: 6 } },
+    }
+    lib = setMapDocument(lib, 'm1', doc as never)
+
+    await saveLibrary(file, lib)
+    const loaded = await loadLibrary(file)
+
+    expect(loaded.maps[0].document?.nodes.a1).toMatchObject({
+      processStage: {
+        kind: 'wait', durationMinutesP50: 45, durationMinutesP90: 120, classificationSource: 'explicit',
+      },
+    })
+    expect(loaded.maps[0].document?.meta).toMatchObject({
+      processAnalysis: { profile: 'automotive', wip: 6 },
+    })
   })
 
   it('recovers a corrupt file by backing it up and returning empty', async () => {

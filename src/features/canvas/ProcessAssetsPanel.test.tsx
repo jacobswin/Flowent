@@ -60,11 +60,11 @@ describe('ProcessAssetsPanel', () => {
 
     expect(screen.queryByText('Research brief')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /expand process assets/i }))
+    fireEvent.click(screen.getByRole('button', { name: /expand assets/i }))
 
     expect(screen.getByText('Research brief')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /collapse process assets/i }))
+    fireEvent.click(screen.getByRole('button', { name: /collapse assets/i }))
 
     expect(screen.queryByText('Research brief')).not.toBeInTheDocument()
   })
@@ -72,7 +72,7 @@ describe('ProcessAssetsPanel', () => {
   it('shows work products, guidance, milestones, and perspectives', () => {
     render(<ProcessAssetsPanel defaultCollapsed={false} document={makeDocument()} onSelectAsset={() => {}} onRenameAsset={() => {}} onDeleteAsset={() => {}} />)
 
-    const completeness = screen.getByLabelText('Stages completeness')
+    const completeness = screen.getByLabelText('Process completeness')
     expect(completeness).toHaveTextContent('What 1')
     expect(completeness).toHaveTextContent('Who 0')
     expect(completeness).toHaveTextContent('When 1')

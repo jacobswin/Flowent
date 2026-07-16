@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js'
 
 export type CanvasLayers = {
   gridLayer: Container
+  laneLayer: Container
   edgeLayer: Container
   nodeLayer: Container
   overlayLayer: Container
@@ -9,17 +10,20 @@ export type CanvasLayers = {
 
 export function createCanvasLayers(root: Container): CanvasLayers {
   const gridLayer = new Container()
+  const laneLayer = new Container()
   const edgeLayer = new Container()
   const nodeLayer = new Container()
   const overlayLayer = new Container()
 
   root.addChild(gridLayer)
+  root.addChild(laneLayer)
   root.addChild(edgeLayer)
   root.addChild(nodeLayer)
   root.addChild(overlayLayer)
 
   return {
     gridLayer,
+    laneLayer,
     edgeLayer,
     nodeLayer,
     overlayLayer,

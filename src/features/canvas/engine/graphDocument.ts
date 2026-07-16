@@ -7,6 +7,7 @@ export function createEmptyDocument(id: string): GraphDocument {
     nodes: new Map(),
     edges: new Map(),
     processAssets: createEmptyProcessAssets(),
+    processInstances: {},
     selectedNodeIds: new Set(),
     selectedEdgeIds: new Set(),
     viewport: { x: 0, y: 0, zoom: 1 },
@@ -22,6 +23,7 @@ export function addNode(doc: GraphDocument, node: GraphNode): GraphDocument {
     ...doc,
     nodes,
     meta: {
+      ...doc.meta,
       dirty: true,
       version: doc.meta.version + 1,
     },
@@ -40,6 +42,7 @@ export function addEdge(doc: GraphDocument, edge: GraphEdge): GraphDocument {
     ...doc,
     edges,
     meta: {
+      ...doc.meta,
       dirty: true,
       version: doc.meta.version + 1,
     },

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
 import { Container, Graphics } from 'pixi.js'
-import type { ConnectionCreateRequest, GraphEdge, GraphNode } from './canvasTypes'
+import type { ConnectionCreateRequest, EdgeEndpointAnchor, GraphEdge, GraphNode } from './canvasTypes'
 import type { EdgeLabelEditorApi } from './useEdgeLabelEditor'
 import type { useCanvasState } from './useCanvasState'
 import { createPixiStage } from './render/pixiStage'
@@ -17,6 +17,7 @@ interface UseCanvasStageLifecycleArgs {
   graphEdgesRef: MutableRefObject<GraphEdge[]>
   nodesByIdRef: MutableRefObject<Map<string, GraphNode>>
   labelEditorRef: MutableRefObject<EdgeLabelEditorApi>
+  closeTransientMenusRef: MutableRefObject<() => void>
   openConnectionCreateMenuRef: MutableRefObject<(request: ConnectionCreateRequest) => void>
   openEdgeContextMenuRef: MutableRefObject<(edgeId: string, point: { screenX: number; screenY: number }) => void>
 }
@@ -32,6 +33,7 @@ export function useCanvasStageLifecycle(args: UseCanvasStageLifecycleArgs): void
     graphEdgesRef,
     nodesByIdRef,
     labelEditorRef,
+    closeTransientMenusRef,
     openConnectionCreateMenuRef,
     openEdgeContextMenuRef,
   } = args
@@ -99,15 +101,32 @@ export function useCanvasStageLifecycle(args: UseCanvasStageLifecycleArgs): void
             viewport: c.viewport,
             connectorMode: c.connectorMode,
             selectNodesInRect: c.selectNodesInRect,
-            onPaneClick: c.onPaneClick,
+            onPaneClick: () => {
+              closeTransientMenusRef.current()
+              c.onPaneClick()
+            },
             zoomAt: c.zoomAt,
             panBy: c.panBy,
             moveSelectedNodes: c.moveSelectedNodes,
-            onNodeClick: c.onNodeClick,
-            onEdgeClick: c.onEdgeClick,
+            beginNodeDrag: c.beginNodeDrag,
+            completeNodeDrag: c.completeNodeDrag,
+            onNodeClick: (nodeId, additive) => {
+              closeTransientMenusRef.current()
+              c.onNodeClick(nodeId, additive)
+            },
+            onEdgeClick: (edgeId, additive) => {
+              closeTransientMenusRef.current()
+              c.onEdgeClick(edgeId, additive)
+            },
             openEditor: c.openEditor,
-            onConnect: c.onConnect,
-            startConnection: c.startConnection,
+            onConnect: (sourceNodeId, targetNodeId, sourcePortId, targetPortId, anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor }) => {
+              closeTransientMenusRef.current()
+              c.onConnect(sourceNodeId, targetNodeId, sourcePortId, targetPortId, anchors)
+            },
+            startConnection: (nodeId, portId) => {
+              closeTransientMenusRef.current()
+              c.startConnection(nodeId, portId)
+            },
             cancelConnection: c.cancelConnection,
             openConnectionCreateMenu: openConnectionCreateMenuRef.current,
           }
@@ -158,15 +177,33 @@ export function useCanvasStageLifecycle(args: UseCanvasStageLifecycleArgs): void
             focusView: c.focusView,
             connectorMode: c.connectorMode,
             connectionStart: c.connectionStart,
-            onConnect: c.onConnect,
-            startConnection: c.startConnection,
+            onConnect: (sourceNodeId, targetNodeId, sourcePortId, targetPortId, anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor }) => {
+              closeTransientMenusRef.current()
+              c.onConnect(sourceNodeId, targetNodeId, sourcePortId, targetPortId, anchors)
+            },
+            startConnection: (nodeId, portId) => {
+              closeTransientMenusRef.current()
+              c.startConnection(nodeId, portId)
+            },
             endConnection: c.endConnection,
             cancelConnection: c.cancelConnection,
             openConnectionCreateMenu: openConnectionCreateMenuRef.current,
-            onNodeClick: c.onNodeClick,
-            onEdgeClick: c.onEdgeClick,
+            onNodeClick: (nodeId, additive) => {
+              closeTransientMenusRef.current()
+              c.onNodeClick(nodeId, additive)
+            },
+            onEdgeClick: (edgeId, additive) => {
+              closeTransientMenusRef.current()
+              c.onEdgeClick(edgeId, additive)
+            },
             onEdgeContextMenu: openEdgeContextMenuRef.current,
-            openEditor: c.openEditor,
+            openEditor: (nodeId) => {
+              closeTransientMenusRef.current()
+              c.openEditor(nodeId)
+            },
+            assetActions: {
+              selectAsset: c.assetActions.selectAsset,
+            },
           }
         },
       })
@@ -186,5 +223,5 @@ export function useCanvasStageLifecycle(args: UseCanvasStageLifecycleArgs): void
       disposed = true
       destroy?.()
     }
-  }, [canvasRef, graphEdgesRef, graphNodesRef, hostRef, labelEditorRef, nodesByIdRef, openConnectionCreateMenuRef, openEdgeContextMenuRef])
+  }, [canvasRef, closeTransientMenusRef, graphEdgesRef, graphNodesRef, hostRef, labelEditorRef, nodesByIdRef, openConnectionCreateMenuRef, openEdgeContextMenuRef])
 }

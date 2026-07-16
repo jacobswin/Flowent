@@ -1,12 +1,10 @@
 import type { MutableRefObject } from 'react'
-import type { GraphDocument } from './canvasTypes'
-import { getEdgeLabelCenter } from './render/edgeGeometry'
-import { getPortAnchor } from './routing/ports'
-import { routeOrthogonalEdge } from './routing/orthogonalRouter'
+import type { EdgeEndpointAnchor, GraphDocument } from './canvasTypes'
+import { getEdgeLabelCenter, getEdgeRoutePoints } from './render/edgeGeometry'
 
 interface RegisterCanvasTestHooksArgs {
-  canvasRef: MutableRefObject<{ document: GraphDocument; onConnect: (sourceId: string, targetId: string, sourcePortId?: string, targetPortId?: string) => void; selectNodesInRect: (x1: number, y1: number, x2: number, y2: number) => void }>
-  getCanvas: () => { document: GraphDocument; onConnect: (sourceId: string, targetId: string, sourcePortId?: string, targetPortId?: string) => void; selectNodesInRect: (x1: number, y1: number, x2: number, y2: number) => void }
+  canvasRef: MutableRefObject<{ document: GraphDocument; onConnect: (sourceId: string, targetId: string, sourcePortId?: string, targetPortId?: string, anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor }) => void; selectNodesInRect: (x1: number, y1: number, x2: number, y2: number) => void }>
+  getCanvas: () => { document: GraphDocument; onConnect: (sourceId: string, targetId: string, sourcePortId?: string, targetPortId?: string, anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor }) => void; selectNodesInRect: (x1: number, y1: number, x2: number, y2: number) => void }
 }
 
 export function registerCanvasTestHooks({ canvasRef, getCanvas }: RegisterCanvasTestHooksArgs): void {
@@ -21,8 +19,10 @@ export function registerCanvasTestHooks({ canvasRef, getCanvas }: RegisterCanvas
       id: string
       sourceNodeId: string
       sourcePortId: string
+      sourceAnchor?: EdgeEndpointAnchor
       targetNodeId: string
       targetPortId: string
+      targetAnchor?: EdgeEndpointAnchor
     } | null
   }).__flowentGetEdgeEndpoints = (edgeId: string) => {
     const found = canvasRef.current.document.edges.get(edgeId)
@@ -31,8 +31,10 @@ export function registerCanvasTestHooks({ canvasRef, getCanvas }: RegisterCanvas
           id: found.id,
           sourceNodeId: found.sourceNodeId,
           sourcePortId: found.sourcePortId,
+          sourceAnchor: found.sourceAnchor,
           targetNodeId: found.targetNodeId,
           targetPortId: found.targetPortId,
+          targetAnchor: found.targetAnchor,
         }
       : null
   }
@@ -87,18 +89,7 @@ export function registerCanvasTestHooks({ canvasRef, getCanvas }: RegisterCanvas
     const doc = canvasRef.current.document
     const map: Record<string, { x: number; y: number }[]> = {}
     for (const edge of doc.edges.values()) {
-      const source = doc.nodes.get(edge.sourceNodeId)
-      const target = doc.nodes.get(edge.targetNodeId)
-      if (!source || !target) continue
-      const from = getPortAnchor(source, edge.sourcePortId, 'source')
-      const to = getPortAnchor(target, edge.targetPortId, 'target')
-      const route = routeOrthogonalEdge({
-        source: { x: from.x, y: from.y },
-        sourceSide: from.side,
-        target: { x: to.x, y: to.y },
-        targetSide: to.side,
-      })
-      map[edge.id] = route
+      map[edge.id] = getEdgeRoutePoints(edge, doc.nodes) ?? []
     }
     return map
   }

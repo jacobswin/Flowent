@@ -1,4 +1,4 @@
-import type { GraphDocument, GraphEdge, GraphNode } from '../canvasTypes'
+import type { EdgeEndpointAnchor, GraphDocument, GraphEdge, GraphNode } from '../canvasTypes'
 import { createGraphNode, createHandoffEdge, type ProcessElementType } from '../processElements'
 
 interface QuickCreateOptions {
@@ -7,6 +7,7 @@ interface QuickCreateOptions {
   newNodeId: string
   newEdgeId: string
   fallbackPosition: { x: number; y: number }
+  sourceAnchor?: EdgeEndpointAnchor
 }
 
 interface ConnectedNodeFromPortOptions {
@@ -16,6 +17,7 @@ interface ConnectedNodeFromPortOptions {
   newNodeId: string
   newEdgeId: string
   dropPosition: { x: number; y: number }
+  sourceAnchor?: EdgeEndpointAnchor
 }
 
 interface QuickCreatePlan {
@@ -41,7 +43,9 @@ export function planQuickCreate(doc: GraphDocument, options: QuickCreateOptions)
 
   return {
     node,
-    edge: createHandoffEdge(options.newEdgeId, source.id, sourcePort.id, node.id, targetPort.id),
+    edge: createHandoffEdge(options.newEdgeId, source.id, sourcePort.id, node.id, targetPort.id, {
+      sourceAnchor: options.sourceAnchor,
+    }),
   }
 }
 
@@ -66,7 +70,9 @@ export function planConnectedNodeFromPort(
 
   return {
     node,
-    edge: createHandoffEdge(options.newEdgeId, source.id, sourcePort.id, node.id, targetPort.id),
+    edge: createHandoffEdge(options.newEdgeId, source.id, sourcePort.id, node.id, targetPort.id, {
+      sourceAnchor: options.sourceAnchor,
+    }),
   }
 }
 

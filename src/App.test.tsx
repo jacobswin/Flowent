@@ -40,7 +40,6 @@ describe('App', () => {
     render(<App />)
 
     expect(screen.getByText('Flowent')).toBeInTheDocument()
-    expect(screen.getByText('Process maps for aligned product teams')).toBeInTheDocument()
     // PIXI's WebGL init + the dynamic import of the LibraryGate chunk is
     // slow under jsdom; give the toolbar a generous wait window.
     await waitFor(() => {

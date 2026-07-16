@@ -14,8 +14,8 @@ export const DEFAULT_REVIEW_STATUS: ReviewStatus = 'unclear'
 export const PROCESS_ELEMENTS: ProcessElementDefinition[] = [
   {
     type: 'stage',
-    label: 'Stage',
-    description: 'Group work around a process phase with entry and exit expectations.',
+    label: 'Map stage',
+    description: 'Add a map-only phase container for Activities and Decisions.',
   },
   {
     type: 'activity',
@@ -42,20 +42,25 @@ export const PROCESS_ELEMENTS: ProcessElementDefinition[] = [
   },
 ]
 
+const FOUR_SIDE_PORTS: GraphPort[] = [
+  { id: 'top', side: 'top' },
+  { id: 'in', side: 'left' },
+  { id: 'out', side: 'right' },
+  { id: 'bottom', side: 'bottom' },
+]
+
 export function getPortsForNodeType(type: GraphNodeType): GraphPort[] {
   switch (type) {
+    case 'stage':
+      // A Stage is a visual container. New connections always attach to one
+      // of its Activities or Decisions, never to the container itself.
+      return []
     case 'start':
-      return [{ id: 'out', side: 'right' }]
     case 'end':
-      return [{ id: 'in', side: 'left' }]
     case 'activity':
     case 'decision':
-    case 'stage':
     case 'bottleneck':
-      return [
-        { id: 'in', side: 'left' },
-        { id: 'out', side: 'right' },
-      ]
+      return FOUR_SIDE_PORTS.map((port) => ({ ...port }))
   }
 }
 
@@ -95,13 +100,15 @@ export function createGraphNode(
         type,
         x: position.x,
         y: position.y,
-        width: 280,
-        height: 132,
+        width: 320,
+        height: 220,
         title: 'New stage',
         goal: '',
         entryCondition: '',
         exitCondition: '',
         owner: '',
+        memberNodeIds: [],
+        stagePadding: 36,
         roleTags: [],
         ports: getPortsForNodeType(type),
       }
@@ -160,13 +167,16 @@ export function createHandoffEdge(
   sourcePortId: string,
   targetNodeId: string,
   targetPortId: string,
+  options: Pick<GraphEdge, 'sourceAnchor' | 'targetAnchor'> = {},
 ): GraphEdge {
   return {
     id,
     sourceNodeId,
     sourcePortId,
+    ...(options.sourceAnchor ? { sourceAnchor: options.sourceAnchor } : {}),
     targetNodeId,
     targetPortId,
+    ...(options.targetAnchor ? { targetAnchor: options.targetAnchor } : {}),
     label: '',
     kind: 'handoff',
     fromRole: '',

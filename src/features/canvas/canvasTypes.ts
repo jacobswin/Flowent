@@ -3,15 +3,35 @@
 // (which is on the order of hundreds of KB and only added because of
 // historical type imports).
 
+import type { ProcessIntelligenceProfileId } from './processIntelligenceProfiles'
+
 export type ReviewStatus = 'unclear' | 'disputed' | 'needs-owner' | 'approved' | 'changed-since-approval'
 
 export type PortSide = 'top' | 'right' | 'bottom' | 'left'
 
 export type ResponsibilityKind = 'responsible' | 'accountable' | 'supporting' | 'consulted' | 'informed'
 
+export type ProcessStageKind = 'value-add' | 'wait' | 'rework'
+
+export type ProcessStageData = {
+  kind: ProcessStageKind
+  durationMinutesP50?: number
+  durationMinutesP90?: number
+  classificationSource: 'explicit' | 'inferred'
+}
+
+export type ProcessAnalysisProfile = ProcessIntelligenceProfileId
+
+export type ProcessAnalysisSettings = {
+  profile: ProcessAnalysisProfile
+  wip?: number
+}
+
 export type ActivityResponsibility = {
   id: string
   roleName: string
+  /** Stable reference into the workspace Role library when available. */
+  roleId?: string
   kind: ResponsibilityKind
 }
 
@@ -36,6 +56,8 @@ export type WorkProductAsset = {
   consumerNodeIds: string[]
   handoffEdgeIds: string[]
   guidanceIds: string[]
+  /** Points to the cross-map Work Product when this is a projected asset. */
+  sharedWorkProductId?: string
 }
 
 export type GuidanceAsset = {
@@ -60,6 +82,9 @@ export type MilestoneAsset = {
   description: string
   stageNodeId: string | null
   workProductStates: MilestoneWorkProductState[]
+  /** Stable source ids for milestones projected from a shared Process Stage. */
+  sharedProcessStageId?: string
+  sharedProcessMilestoneId?: string
 }
 
 export type ProcessAssets = {
@@ -86,6 +111,11 @@ export type GraphPort = {
   side: PortSide
 }
 
+export type EdgeEndpointAnchor = {
+  side: PortSide
+  offset: number
+}
+
 export type GraphNodeType = 'activity' | 'decision' | 'stage' | 'bottleneck' | 'start' | 'end'
 
 export type GraphNode = {
@@ -110,6 +140,21 @@ export type GraphNode = {
   suspectedCause?: string
   reviewStatus?: ReviewStatus
   responsibilities?: ActivityResponsibility[]
+  /** Runtime projection metadata for a reusable shared Activity. */
+  sharedActivityId?: string
+  processInstanceId?: string
+  sharedProcessPlacementId?: string
+  /** Runtime projection metadata for a reusable shared Process Decision. */
+  sharedProcessDecisionId?: string
+  /** Runtime projection metadata for a reusable shared Process Stage. */
+  sharedProcessStageId?: string
+  /** Child Activities and Decisions contained by this Stage. */
+  memberNodeIds?: string[]
+  /** Shared Role library id for the Stage owner when available. */
+  ownerRoleId?: string
+  /** Uniform free space around the derived member bounds. */
+  stagePadding?: number
+  processStage?: ProcessStageData
   assetSummary?: NodeAssetSummary
   ports: GraphPort[]
 }
@@ -118,8 +163,10 @@ export type GraphEdge = {
   id: string
   sourceNodeId: string
   sourcePortId: string
+  sourceAnchor?: EdgeEndpointAnchor
   targetNodeId: string
   targetPortId: string
+  targetAnchor?: EdgeEndpointAnchor
   label: string
   color?: string
   kind?: 'handoff'
@@ -131,6 +178,21 @@ export type GraphEdge = {
   reviewStatus?: ReviewStatus
   workProductIds?: string[]
   assetSummary?: EdgeAssetSummary
+  processInstanceId?: string
+  sharedProcessHandoffId?: string
+  /** A direct Stage edge saved before Stage became a no-port container. */
+  legacyStageConnection?: boolean
+}
+
+export type ProcessInstance = {
+  id: string
+  processId: string
+  x: number
+  y: number
+  nodeIdsByPlacement: Record<string, string>
+  nodeIdsByDecision: Record<string, string>
+  stageNodeIdsByStage: Record<string, string>
+  edgeIdsByHandoff: Record<string, string>
 }
 
 export type GraphViewport = {
@@ -139,11 +201,15 @@ export type GraphViewport = {
   zoom: number
 }
 
+export type GraphLayoutProfile = 'generated-flow' | 'left-to-right' | 'swimlane'
+
 export type ConnectionCreateRequest = {
   sourceNodeId: string
   sourcePortId: string
+  sourceAnchor?: EdgeEndpointAnchor
   worldPosition: { x: number; y: number }
   screenPosition: { x: number; y: number }
+  clientPosition?: { x: number; y: number }
 }
 
 export type GraphDocument = {
@@ -151,12 +217,16 @@ export type GraphDocument = {
   nodes: Map<string, GraphNode>
   edges: Map<string, GraphEdge>
   processAssets: ProcessAssets
+  processInstances: Record<string, ProcessInstance>
   selectedNodeIds: Set<string>
   selectedEdgeIds: Set<string>
   viewport: GraphViewport
   meta: {
     dirty: boolean
     version: number
+    layoutProfile?: GraphLayoutProfile
+    layoutNodeOrder?: string[]
+    processAnalysis?: ProcessAnalysisSettings
   }
 }
 
@@ -185,8 +255,14 @@ export type GraphCommand =
             | 'impact'
             | 'suspectedCause'
             | 'reviewStatus'
+            | 'processStage'
+            | 'memberNodeIds'
+            | 'ownerRoleId'
+            | 'stagePadding'
             | 'x'
             | 'y'
+            | 'width'
+            | 'height'
           >
         >
       }
@@ -200,8 +276,10 @@ export type GraphCommand =
             GraphEdge,
             | 'sourceNodeId'
             | 'sourcePortId'
+            | 'sourceAnchor'
             | 'targetNodeId'
             | 'targetPortId'
+            | 'targetAnchor'
             | 'label'
             | 'color'
             | 'fromRole'
@@ -238,6 +316,7 @@ export type ActivityNodeData = {
   roleIds: string[]
   responsibilities?: ActivityResponsibility[]
   expectations?: string
+  processStage?: ProcessStageData
   assetSummary?: NodeAssetSummary
   kind: 'activity'
 }
@@ -256,6 +335,9 @@ export type StageNodeData = {
   entryCondition: string
   exitCondition: string
   owner: string
+  ownerRoleId?: string
+  memberNodeIds?: string[]
+  stagePadding?: number
   assetSummary?: NodeAssetSummary
   kind: 'stage'
 }
@@ -288,12 +370,14 @@ export type ProcessEdge = {
   type: 'handoff'
   source: string
   target: string
-  sourceHandle?: string
-  targetHandle?: string
-  data?: {
-    label?: string
-    color?: string
-    fromRole?: string
+    sourceHandle?: string
+    targetHandle?: string
+    data?: {
+      label?: string
+      color?: string
+      sourceAnchor?: EdgeEndpointAnchor
+      targetAnchor?: EdgeEndpointAnchor
+      fromRole?: string
     toRole?: string
     artifact?: string
     expectation?: string

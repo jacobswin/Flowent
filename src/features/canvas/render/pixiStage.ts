@@ -37,14 +37,19 @@ export async function createPixiStage(host: HTMLDivElement): Promise<PixiStage> 
     app,
     root,
     destroy: () => {
+      const canvas = app.canvas
       try {
-        const canvas = app.canvas
+        app.ticker.stop()
+      } catch {
+        // Ticker cleanup should not prevent the remaining teardown steps.
+      }
+      try {
         app.destroy(true)
-        if (canvas && canvas.parentElement === host) {
-          host.removeChild(canvas)
-        }
       } catch {
         // Silently handle cleanup errors during unmount
+      }
+      if (canvas && canvas.parentElement === host) {
+        host.removeChild(canvas)
       }
     },
   }

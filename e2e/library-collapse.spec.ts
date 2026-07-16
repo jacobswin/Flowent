@@ -36,7 +36,7 @@ test('collapsing the library lets the canvas fill the viewport', async ({ page }
   expect(after.width).toBeGreaterThanOrEqual(viewport.width - 1)
 
   const railBox = await expandLibrary.boundingBox()
-  const titleBox = await page.locator('.canvas-title').boundingBox()
-  if (!railBox || !titleBox) throw new Error('library rail or title was unavailable')
-  expect(titleBox.x).toBeGreaterThanOrEqual(railBox.x + railBox.width + 12)
+  if (!railBox) throw new Error('library rail was unavailable')
+  await expect(expandLibrary).toContainText('Flowent')
+  await expect(page.locator('.canvas-control-rail .canvas-title')).toHaveCount(0)
 })

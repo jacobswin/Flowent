@@ -23,7 +23,7 @@ describe('AlignmentChecklist', () => {
   it('renders diagnostics as alignment work, not diagram feedback', () => {
     render(<AlignmentChecklist defaultCollapsed={false} diagnostics={diagnostics} onSelectDiagnostic={() => {}} />)
 
-    expect(screen.getByText('Alignment checklist')).toBeInTheDocument()
+    expect(screen.getByText('Alignment')).toBeInTheDocument()
     expect(screen.getByText('Activity needs responsable roles')).toBeInTheDocument()
     expect(screen.getByText('Add at least one responsable role.')).toBeInTheDocument()
   })
@@ -42,11 +42,11 @@ describe('AlignmentChecklist', () => {
 
     expect(screen.queryByRole('button', { name: /activity needs responsable roles/i })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /expand alignment checklist/i }))
+    fireEvent.click(screen.getByRole('button', { name: /expand alignment/i }))
 
     expect(screen.getByRole('button', { name: /activity needs responsable roles/i })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /collapse alignment checklist/i }))
+    fireEvent.click(screen.getByRole('button', { name: /collapse alignment/i }))
 
     expect(screen.queryByRole('button', { name: /activity needs responsable roles/i })).not.toBeInTheDocument()
   })

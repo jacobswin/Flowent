@@ -7,6 +7,13 @@ import {
 } from './processElements'
 
 describe('processElements', () => {
+  const fourSidePorts = [
+    { id: 'top', side: 'top' },
+    { id: 'in', side: 'left' },
+    { id: 'out', side: 'right' },
+    { id: 'bottom', side: 'bottom' },
+  ]
+
   it('defines Flowent process elements instead of generic diagram shapes', () => {
     expect(PROCESS_ELEMENTS.map((item) => item.type)).toEqual([
       'stage',
@@ -32,10 +39,7 @@ describe('processElements', () => {
       roleTags: [],
       expectations: '',
     })
-    expect(node.ports).toEqual([
-      { id: 'in', side: 'left' },
-      { id: 'out', side: 'right' },
-    ])
+    expect(node.ports).toEqual(fourSidePorts)
   })
 
   it('creates stage and bottleneck nodes with process-specific fields', () => {
@@ -81,11 +85,8 @@ describe('processElements', () => {
   })
 
   it('returns stable ports for every node type', () => {
-    expect(getPortsForNodeType('start')).toEqual([{ id: 'out', side: 'right' }])
-    expect(getPortsForNodeType('end')).toEqual([{ id: 'in', side: 'left' }])
-    expect(getPortsForNodeType('decision')).toEqual([
-      { id: 'in', side: 'left' },
-      { id: 'out', side: 'right' },
-    ])
+    expect(getPortsForNodeType('start')).toEqual(fourSidePorts)
+    expect(getPortsForNodeType('end')).toEqual(fourSidePorts)
+    expect(getPortsForNodeType('decision')).toEqual(fourSidePorts)
   })
 })

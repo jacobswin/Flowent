@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Flowent Metamodel v0 defines the product vocabulary for a role-first, multi-view process map system for R&D teams. It borrows heavily from Stages' process-management concepts while adapting them for flexible work discussions, generated draft maps, collaborative consensus, and lightweight activation governance.
+Flowent Metamodel v0 defines the product vocabulary for a role-first, multi-view process map system for R&D teams. It adapts structured process-management concepts for flexible work discussions, generated draft maps, collaborative consensus, and lightweight activation governance.
 
 The v0 priority is **role navigation and multi-role views**. Scenario-based generation is the entry point, and versioning, approval, and impact analysis provide lightweight governance when a draft map becomes official.
 

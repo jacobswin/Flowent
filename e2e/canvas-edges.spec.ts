@@ -1,29 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { clickPaletteElement } from './canvasDockHelpers'
+import { clickPaletteElement, resetLibrary } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await page.evaluate(async () => {
-    try { localStorage.clear() } catch { /* noop */ }
-    history.replaceState(null, '', '/')
-    const res = await fetch('/api/library')
-    const body = (await res.json()) as { data: { maps: { id: string }[] } }
-    for (const m of body.data.maps) {
-      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
-    }
-  })
-  await page.reload()
+  await resetLibrary(page)
 })
 
 test('connecting two activities via ports produces an edge', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.text().includes('[port-down]') || msg.text().includes('[bind-port]'))
-      console.log('[console]', msg.type(), msg.text())
-  })
+  attachPageDiagnostics(page, { consoleErrors: true, consoleIncludes: ['[port-down]', '[bind-port]'] })
 
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(200)
@@ -49,7 +36,6 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   await page.waitForTimeout(120)
 
   const statusBefore = await page.locator(statusBar).textContent()
-  console.log('[status-before]', statusBefore)
   expect(statusBefore).toContain('3 nodes')
   // The current branch auto-connects one of the new activities to
   // start via quickCreate, so we may already have 1 edge before
@@ -68,37 +54,41 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
   // produces columns: [start] in column 0, [activity1, activity2] in column 1.
   // activity1 is at (320, 120) and activity2 at (320, 260) approximately.
   // We just want any activity's in port — read it from a known world coord.
-  await page.locator('button:has-text("Layout")').click()
+  await page.getByRole('button', { name: /flow layout/i }).click()
   await page.waitForTimeout(300)
 
-  const startPosition = await page.evaluate(() => window.__flowentGetNodePosition?.('start'))
-  if (!startPosition) throw new Error('no start node position')
+  const positions = await page.evaluate(() => window.__flowentGetNodePositions?.() ?? {})
+  const activityId = Object.keys(positions)
+    .filter((id) => id.startsWith('activity-'))
+    .sort((a, b) => (positions[a].x - positions[b].x) || (positions[a].y - positions[b].y))[0]
+  if (!activityId) throw new Error('no activity node position')
 
-  // With no edges, auto-layout spreads root components horizontally. The first
-  // activity lands one column to the right of Start with the same Y.
-  const activityPosition = { x: startPosition.x + 360, y: startPosition.y }
+  const startBounds = await page.evaluate(() => window.__flowentGetNodeBounds?.('start'))
+  const activityBounds = await page.evaluate((id) => window.__flowentGetNodeBounds?.(id), activityId)
+  const viewport = await page.evaluate(() => window.__flowentGetViewport?.())
+  if (!startBounds || !activityBounds || !viewport) throw new Error('missing node bounds or viewport')
 
-  const outX = box.x + startPosition.x + 120
-  const outY = box.y + startPosition.y + 28
-  const inX = box.x + activityPosition.x
-  const inY = box.y + activityPosition.y + 48
+  const toScreen = (worldX: number, worldY: number) => ({
+    x: box.x + viewport.x + worldX * viewport.zoom,
+    y: box.y + viewport.y + worldY * viewport.zoom,
+  })
+  const out = toScreen(startBounds.x + startBounds.width, startBounds.y + startBounds.height / 2)
+  const input = toScreen(activityBounds.x, activityBounds.y + activityBounds.height / 2)
 
-  // Log status before drag to see where the nodes actually are on screen.
   const sbBefore = await page.locator(statusBar).textContent()
-  console.log('[before-drag]', sbBefore)
+  expect(sbBefore).toContain('3 nodes')
 
-  await page.mouse.move(outX, outY)
+  await page.mouse.move(out.x, out.y)
   await page.mouse.down()
   for (let i = 1; i <= 12; i++) {
     const t = i / 12
-    await page.mouse.move(outX + (inX - outX) * t, outY + (inY - outY) * t)
+    await page.mouse.move(out.x + (input.x - out.x) * t, out.y + (input.y - out.y) * t)
     await page.waitForTimeout(30)
   }
   await page.mouse.up()
   await page.waitForTimeout(250)
 
   const statusAfter = await page.locator(statusBar).textContent()
-  console.log('[status-after]', statusAfter)
 
   expect(statusAfter).toContain('3 nodes')
   const edgeCountAfter = Number(statusAfter?.match(/(\d+) edges/)?.[1] ?? 0)
@@ -106,7 +96,7 @@ test('connecting two activities via ports produces an edge', async ({ page }) =>
 })
 
 test('dragging from a right-side endpoint to blank canvas opens a type picker and creates a connected node', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(200)
   await page.keyboard.press('0')
@@ -164,6 +154,86 @@ test('clicking the selected node plus handle opens Plus Create and creates a con
   const statusAfter = await page.locator(statusBar).textContent()
   expect(statusAfter).toContain('2 nodes')
   expect(statusAfter).toContain('1 edges')
+})
+
+test('clicking a node while Plus Create is open closes the picker and keeps node quick actions visible', async ({ page }) => {
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(200)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no pixi canvas')
+
+  const startPosition = await page.evaluate(() => window.__flowentGetNodePosition?.('start'))
+  if (!startPosition) throw new Error('no start node position')
+
+  await page.mouse.click(box.x + startPosition.x + 60, box.y + startPosition.y + 28)
+
+  const quickConnect = page.getByRole('button', { name: /quick connect from start/i })
+  await expect(quickConnect).toBeVisible()
+  await quickConnect.click()
+
+  const picker = page.getByRole('menu', { name: /choose next node type/i })
+  await expect(picker).toBeVisible()
+
+  await page.mouse.click(box.x + startPosition.x + 60, box.y + startPosition.y + 28)
+
+  await expect(picker).toBeHidden()
+  const nodeActions = page.getByRole('toolbar', { name: /node quick actions/i })
+  await expect(nodeActions).toBeVisible()
+  await page.waitForTimeout(400)
+  await expect(nodeActions).toBeVisible()
+})
+
+test('clicking a node body keeps node quick actions visible', async ({ page }) => {
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(200)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  const box = await page.locator(pixiCanvas).boundingBox()
+  if (!box) throw new Error('no pixi canvas')
+
+  const startPosition = await page.evaluate(() => window.__flowentGetNodePosition?.('start'))
+  if (!startPosition) throw new Error('no start node position')
+
+  await page.mouse.click(box.x + startPosition.x + 60, box.y + startPosition.y + 28)
+
+  const nodeActions = page.getByRole('toolbar', { name: /node quick actions/i })
+  await expect(nodeActions).toBeVisible()
+  await page.waitForTimeout(400)
+  await expect(nodeActions).toBeVisible()
+})
+
+test('clicking an activity body keeps node quick actions visible', async ({ page }) => {
+  await page.waitForSelector(pixiCanvas)
+  await page.waitForTimeout(200)
+  await page.keyboard.press('0')
+  await page.waitForTimeout(80)
+
+  await clickPaletteElement(page, 'Activity')
+  await page.waitForTimeout(200)
+
+  const hostBox = await page.locator('.pixi-host').boundingBox()
+  if (!hostBox) throw new Error('no pixi host')
+
+  const positions = await page.evaluate(() => window.__flowentGetNodePositions?.() ?? {})
+  const activityId = Object.keys(positions).find((id) => id.startsWith('activity-'))
+  if (!activityId) throw new Error('no activity node')
+  const activityBounds = await page.evaluate((id) => window.__flowentGetNodeBounds?.(id), activityId)
+  const viewport = await page.evaluate(() => window.__flowentGetViewport?.())
+  if (!activityBounds || !viewport) throw new Error('missing activity bounds')
+
+  await page.mouse.click(
+    hostBox.x + viewport.x + (activityBounds.x + activityBounds.width / 2) * viewport.zoom,
+    hostBox.y + viewport.y + (activityBounds.y + activityBounds.height / 2) * viewport.zoom,
+  )
+
+  const nodeActions = page.getByRole('toolbar', { name: /node quick actions/i })
+  await expect(nodeActions).toBeVisible()
+  await page.waitForTimeout(400)
+  await expect(nodeActions).toBeVisible()
 })
 
 test('selecting an edge keeps editing behind explicit quick actions', async ({ page }) => {
@@ -290,8 +360,6 @@ test('dragging the selected node plus handle to an existing node connects them',
 
   const box = await page.locator(pixiCanvas).boundingBox()
   if (!box) throw new Error('no pixi canvas')
-  const hostBox = await page.locator('.pixi-host').boundingBox()
-  if (!hostBox) throw new Error('no pixi host')
 
   const positions = await page.evaluate(() => window.__flowentGetNodePositions?.() ?? {})
   const activityId = Object.keys(positions).find((id) => id.startsWith('activity-'))
@@ -299,23 +367,28 @@ test('dragging the selected node plus handle to an existing node connects them',
 
   const startPosition = await page.evaluate(() => window.__flowentGetNodePosition?.('start'))
   const activityPosition = await page.evaluate((id) => window.__flowentGetNodePosition?.(id), activityId)
-  if (!startPosition || !activityPosition) throw new Error('missing node position')
+  const viewport = await page.evaluate(() => window.__flowentGetViewport?.())
+  if (!startPosition || !activityPosition || !viewport) throw new Error('missing node position')
+  const toScreenPoint = (point: { x: number; y: number }) => ({
+    x: box.x + viewport.x + point.x * viewport.zoom,
+    y: box.y + viewport.y + point.y * viewport.zoom,
+  })
 
   // The selected activity's above-node toolbar can overlap the center of the
   // nearby Start node, so pick a visible left-side point on Start.
-  await page.mouse.click(hostBox.x + startPosition.x + 4, hostBox.y + startPosition.y + 28)
+  const startClick = toScreenPoint({ x: startPosition.x + 4, y: startPosition.y + 28 })
+  await page.mouse.click(startClick.x, startClick.y)
 
   const quickConnect = page.getByRole('button', { name: /quick connect from start/i })
   await expect(quickConnect).toBeVisible()
   const handleBox = await quickConnect.boundingBox()
   if (!handleBox) throw new Error('no quick connect handle')
 
-  const targetX = box.x + activityPosition.x + 110
-  const targetY = box.y + activityPosition.y + 56
+  const targetPoint = toScreenPoint({ x: activityPosition.x + 110, y: activityPosition.y + 56 })
 
   await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
   await page.mouse.down()
-  await page.mouse.move(targetX, targetY, { steps: 10 })
+  await page.mouse.move(targetPoint.x, targetPoint.y, { steps: 10 })
   await page.mouse.up()
   await page.waitForTimeout(250)
 

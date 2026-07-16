@@ -1,11 +1,12 @@
 import { Container, Graphics } from 'pixi.js'
 import type { FederatedPointerEvent } from 'pixi.js'
-import type { GraphEdge, GraphNode } from './canvasTypes'
+import type { EdgeEndpointAnchor, GraphEdge, GraphNode } from './canvasTypes'
 import type { CanvasLayers } from './render/layers'
 import { drawGrid } from './render/layers'
 import { drawEdges } from './render/drawEdges'
-import { getPortPosition } from './render/drawEdges'
+import { getPortPosition, getRoundedCornerRadius } from './render/drawEdges'
 import { drawNodes } from './render/drawNodes'
+import { drawSwimlanes } from './render/drawSwimlanes'
 import type { PixiStage } from './render/pixiStage'
 import type { EdgeLabelAnchor } from './useEdgeLabelEditor'
 
@@ -22,6 +23,7 @@ export interface RedrawCanvasLike {
     targetNodeId: string,
     sourcePortId?: string,
     targetPortId?: string,
+    anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor },
   ) => void
   startConnection: (nodeId: string, portId: string) => void
   endConnection: (nodeId: string, portId: string) => void
@@ -31,6 +33,9 @@ export interface RedrawCanvasLike {
   onEdgeClick: (edgeId: string, additive: boolean) => void
   onEdgeContextMenu: (edgeId: string, point: { screenX: number; screenY: number }) => void
   openEditor: (nodeId: string) => void
+  assetActions: {
+    selectAsset: (kind: 'workProduct' | 'guidance' | 'milestone', id: string) => void
+  }
 }
 
 export interface RedrawLabelEditorLike {
@@ -87,8 +92,10 @@ export function registerCanvasRedrawLoop(
     nodes: typeof graphNodesRef.current,
     selected: Set<string>,
     dimmed: Set<string>,
+    layoutProfile: import('./canvasTypes').GraphLayoutProfile | undefined,
   ) =>
     JSON.stringify({
+      layoutProfile,
       ids: nodes.map((n) => n.id),
       positions: nodes.map((n) => `${n.id}:${n.x},${n.y}`),
       titles: nodes.map((n) => `${n.id}:${n.title}`),
@@ -142,6 +149,7 @@ export function registerCanvasRedrawLoop(
     edges: typeof graphEdgesRef.current,
     selected: Set<string>,
     dimmed: Set<string>,
+    viewportZoom: number,
   ) =>
     JSON.stringify({
       ids: edges.map((e) => e.id),
@@ -156,12 +164,26 @@ export function registerCanvasRedrawLoop(
       endpoints: edges.map((e) => {
         const s = nodesByIdRef.current.get(e.sourceNodeId)
         const t = nodesByIdRef.current.get(e.targetNodeId)
-        return `${e.id}:${e.sourcePortId}@${s?.x ?? 0},${s?.y ?? 0}>${e.targetPortId}@${
+        return `${e.id}:${e.sourcePortId}:${e.sourceAnchor?.side ?? ''}:${e.sourceAnchor?.offset ?? ''}@${s?.x ?? 0},${s?.y ?? 0}>${e.targetPortId}:${e.targetAnchor?.side ?? ''}:${e.targetAnchor?.offset ?? ''}@${
           t?.x ?? 0
         },${t?.y ?? 0}`
       }),
       selected: Array.from(selected),
       dimmed: Array.from(dimmed),
+      roundedCornerRadius: Math.round(getRoundedCornerRadius(viewportZoom) * 100) / 100,
+    })
+
+  const computeLaneSignature = (doc: import('./canvasTypes').GraphDocument) =>
+    JSON.stringify({
+      profile: doc.meta.layoutProfile ?? '',
+      order: doc.meta.layoutNodeOrder ?? [],
+      positions: Array.from(doc.nodes.values()).map((n) => `${n.id}:${n.x},${n.y}:${n.width},${n.height}`),
+      responsibilities: Array.from(doc.nodes.values()).map((n) =>
+        `${n.id}:${(n.responsibilities ?? []).map((r) => `${r.kind}:${r.roleName}`).join('|')}:${n.roleTags.join(',')}`,
+      ),
+      workProducts: Object.values(doc.processAssets.workProducts).map((asset) =>
+        `${asset.id}:${asset.title}:${asset.state}:${(asset.activityLinks ?? []).map((link) => `${link.id}:${link.nodeId}:${link.relation}:${link.maturity}`).join('|')}`,
+      ),
     })
 
   // Track the last data signature we rebuilt children with. If the
@@ -174,6 +196,7 @@ export function registerCanvasRedrawLoop(
   // zooming stay smooth.
   let lastNodeSignature = ''
   let lastEdgeSignature = ''
+  let lastLaneSignature = ''
 
   // Track which node (by id) is currently hovered, so the per-frame
   // port-visibility pass can fade the right container's ports in.
@@ -398,6 +421,13 @@ export function registerCanvasRedrawLoop(
     // Grid scales with the viewport, so it needs to redraw on every
     // frame to track zoom/pan. It's cheap (just lines).
     drawGrid(layers.gridLayer, width / c.viewport.zoom, height / c.viewport.zoom)
+    const laneSig = computeLaneSignature(c.document)
+    if (laneSig !== lastLaneSignature) {
+      lastLaneSignature = laneSig
+      drawSwimlanes(layers.laneLayer, c.document, {
+        onSelectWorkProduct: (workProductId) => c.assetActions.selectAsset('workProduct', workProductId),
+      })
+    }
     // Only rebuild edges/nodes when the data they render has actually
     // changed. Recreating children on every frame destroys the
     // per-child event listeners (pointerdown, globalpointermove,
@@ -408,6 +438,7 @@ export function registerCanvasRedrawLoop(
       graphEdgesRef.current,
       c.selectedEdgeIds,
       c.focusView.dimmedEdgeIds,
+      c.viewport.zoom,
     )
     if (edgeSig !== lastEdgeSignature) {
       lastEdgeSignature = edgeSig
@@ -423,17 +454,20 @@ export function registerCanvasRedrawLoop(
         onEdgeContextMenu: c.onEdgeContextMenu,
         edgeHitLayer,
         labelHitLayer,
+        viewportZoom: c.viewport.zoom,
       })
     }
     const nodeSig = computeNodeSignature(
       graphNodesRef.current,
       c.selectedNodeIds,
       c.focusView.dimmedNodeIds,
+      c.document.meta.layoutProfile,
     )
     if (nodeSig !== lastNodeSignature) {
       lastNodeSignature = nodeSig
       drawNodes(layers.nodeLayer, graphNodesRef.current, c.selectedNodeIds, {
         dimmedNodeIds: c.focusView.dimmedNodeIds,
+        layoutProfile: c.document.meta.layoutProfile,
       })
       // Children were just created; mark them as fresh so the
       // listener attachment loop can run once.

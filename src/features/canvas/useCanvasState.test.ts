@@ -1,9 +1,156 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { useCanvasState, migrateDecisionPorts } from './useCanvasState'
 import { createEmptyDocument } from './engine/graphDocument'
 import type { GraphDocument, GraphNode } from './canvasTypes'
 import { getPortPosition } from './render/drawEdges'
+import { createGraphNode, createHandoffEdge } from './processElements'
+
+function makeCollapsedLayoutDocument(): GraphDocument {
+  const doc = createEmptyDocument('collapsed-ai-map')
+  const ids = ['start', 'stage-1', 'act-2', 'act-3', 'act-4', 'act-5', 'dec-6', 'act-7', 'act-8', 'end']
+  doc.nodes = new Map(ids.map((id, index) => [
+    id,
+    {
+      id,
+      type: id === 'start' ? 'start' : id === 'end' ? 'end' : id.startsWith('dec') ? 'decision' : id.startsWith('stage') ? 'stage' : 'activity',
+      x: id === 'start' ? 220 : 940,
+      y: id === 'start' ? 445 : -320 + index * 170,
+      width: id === 'start' || id === 'end' ? 120 : id.startsWith('stage') ? 280 : 220,
+      height: id === 'start' || id === 'end' ? 56 : id.startsWith('stage') ? 132 : 112,
+      title: id,
+      roleTags: [],
+      ports: id === 'start'
+        ? [{ id: 'out', side: 'right' }]
+        : id === 'end'
+          ? [{ id: 'in', side: 'left' }]
+          : [{ id: 'in', side: 'left' }, { id: 'out', side: 'right' }],
+    } satisfies GraphNode,
+  ]))
+  const edgePairs = [
+    ['start', 'stage-1'],
+    ['stage-1', 'act-2'],
+    ['act-2', 'act-3'],
+    ['act-3', 'act-4'],
+    ['act-4', 'act-5'],
+    ['act-5', 'dec-6'],
+    ['dec-6', 'act-7'],
+    ['act-7', 'act-8'],
+    ['act-8', 'end'],
+    ['dec-6', 'act-4'],
+  ]
+  doc.edges = new Map(edgePairs.map(([source, target], index) => [
+    `edge-${index}`,
+    {
+      id: `edge-${index}`,
+      sourceNodeId: source,
+      sourcePortId: 'out',
+      targetNodeId: target,
+      targetPortId: 'in',
+      label: '',
+    },
+  ]))
+  doc.viewport = { x: 180, y: 360, zoom: 0.3 }
+  doc.meta = { dirty: false, version: 1 }
+  return doc
+}
+
+function makeGeneratedFlowDocument(): GraphDocument {
+  const nodes = [
+    createGraphNode('start', 'start', { x: 0, y: 120 }),
+    { ...createGraphNode('activity', 'trigger', { x: 220, y: 120 }), title: 'DVP试验偏差产生' },
+    { ...createGraphNode('decision', 'risk', { x: 500, y: 120 }), title: '步骤0：风险评估' },
+    { ...createGraphNode('activity', 'blocked', { x: 780, y: 120 }), title: '禁止偏差，必须整改' },
+    { ...createGraphNode('activity', 'formal-report', { x: 1060, y: 120 }), title: '步骤1：DRE编制评审报告' },
+    createGraphNode('end', 'end', { x: 1340, y: 120 }),
+  ]
+  const edges = [
+    createHandoffEdge('start-trigger', 'start', 'out', 'trigger', 'in'),
+    createHandoffEdge('trigger-risk', 'trigger', 'out', 'risk', 'in'),
+    { ...createHandoffEdge('risk-blocked', 'risk', 'out', 'blocked', 'in'), label: '高风险/法规类/中风险' },
+    { ...createHandoffEdge('risk-formal', 'risk', 'out', 'formal-report', 'in'), label: '低风险' },
+    createHandoffEdge('formal-end', 'formal-report', 'out', 'end', 'in'),
+  ]
+
+  return {
+    ...createEmptyDocument('generated-flow-map'),
+    nodes: new Map(nodes.map((node) => [node.id, node])),
+    edges: new Map(edges.map((edge) => [edge.id, edge])),
+    meta: {
+      dirty: false,
+      version: 1,
+      layoutProfile: 'generated-flow',
+      layoutNodeOrder: ['trigger', 'risk', 'formal-report', 'blocked'],
+    },
+  }
+}
+
+function makeSwimlaneDocument(): GraphDocument {
+  const a1 = {
+    ...createGraphNode('activity', 'a1', { x: 0, y: 0 }),
+    title: 'Prepare deviation report',
+    responsibilities: [{ id: 'r1', roleName: 'DRE', kind: 'responsible' as const }],
+    roleTags: ['DRE'],
+  }
+  const a2 = {
+    ...createGraphNode('activity', 'a2', { x: 0, y: 0 }),
+    title: 'Review and archive',
+    responsibilities: [{ id: 'r2', roleName: 'SVE', kind: 'responsible' as const }],
+    roleTags: ['SVE'],
+  }
+
+  return {
+    ...createEmptyDocument('swimlane-state-map'),
+    nodes: new Map([
+      ['start', createGraphNode('start', 'start', { x: 0, y: 0 })],
+      ['a1', a1],
+      ['a2', a2],
+      ['end', createGraphNode('end', 'end', { x: 0, y: 0 })],
+    ]),
+    edges: new Map([
+      ['start-a1', createHandoffEdge('start-a1', 'start', 'out', 'a1', 'in')],
+      ['a1-a2', createHandoffEdge('a1-a2', 'a1', 'out', 'a2', 'in')],
+      ['a2-end', createHandoffEdge('a2-end', 'a2', 'out', 'end', 'in')],
+    ]),
+    processAssets: {
+      guidanceItems: {},
+      milestones: {},
+      workProducts: {
+        'wp-input': {
+          id: 'wp-input',
+          title: 'Deviation record',
+          state: 'Draft',
+          description: '',
+          producerNodeIds: [],
+          consumerNodeIds: ['a1'],
+          handoffEdgeIds: [],
+          guidanceIds: [],
+          activityLinks: [{ id: 'link-input', nodeId: 'a1', relation: 'input', maturity: 'Draft' }],
+        },
+        'wp-output': {
+          id: 'wp-output',
+          title: 'Reviewed report',
+          state: 'Approved',
+          description: '',
+          producerNodeIds: ['a2'],
+          consumerNodeIds: [],
+          handoffEdgeIds: [],
+          guidanceIds: [],
+          activityLinks: [{ id: 'link-output', nodeId: 'a2', relation: 'output', maturity: 'Approved' }],
+        },
+      },
+    },
+    meta: { dirty: false, version: 1, layoutNodeOrder: ['a1', 'a2'] },
+  }
+}
+
+function graphNode(doc: GraphDocument, id: string): GraphNode {
+  return doc.nodes.get(id)!
+}
+
+function graphCenterX(node: GraphNode): number {
+  return node.x + node.width / 2
+}
 
 describe('useCanvasState', () => {
   it('adds activity node from toolbar action', () => {
@@ -303,21 +450,81 @@ describe('useCanvasState', () => {
     expect(worldY).toBeCloseTo(150, 5)
   })
 
-  it('clamps zoomAt to the [0.2, 3] range', () => {
+  it('clamps zoom controls to the [0.05, 5] range', () => {
     const { result } = renderHook(() => useCanvasState())
 
     act(() => {
       result.current.zoomAt(10, 0, 0)
     })
-    expect(result.current.viewport.zoom).toBeLessThanOrEqual(3)
+    expect(result.current.viewport.zoom).toBeLessThanOrEqual(5)
 
     act(() => {
       result.current.zoomAt(0.01, 0, 0)
     })
-    expect(result.current.viewport.zoom).toBeGreaterThanOrEqual(0.2)
+    expect(result.current.viewport.zoom).toBeGreaterThanOrEqual(0.05)
+
+    act(() => {
+      result.current.zoomToPercent(777)
+    })
+    expect(result.current.viewport.zoom).toBe(5)
+
+    act(() => {
+      result.current.zoomToPercent(2)
+    })
+    expect(result.current.viewport.zoom).toBe(0.05)
   })
 
-  it('migrateDecisionPorts: 3-port decision becomes 2-port', () => {
+  it('repairs a saved AI layout that collapsed into a vertical column', async () => {
+    const initialDocument = makeCollapsedLayoutDocument()
+    const { result } = renderHook(() => useCanvasState({ initialDocument }))
+
+    await waitFor(() => {
+      const xBuckets = new Set(result.current.nodes.map((node) => Math.round(node.position.x / 50) * 50))
+      const yBuckets = new Set(result.current.nodes.map((node) => Math.round(node.position.y / 50) * 50))
+      expect(xBuckets.size).toBeGreaterThanOrEqual(6)
+      expect(yBuckets.size).toBeGreaterThanOrEqual(2)
+      expect(result.current.viewport.zoom).toBe(1)
+    })
+  })
+
+  it('applies Flow layout as an explicit left-to-right action', async () => {
+    const { result } = renderHook(() => useCanvasState({ initialDocument: makeGeneratedFlowDocument() }))
+
+    await act(async () => {
+      await result.current.applyFlowLayout()
+    })
+
+    const doc = result.current.document
+    expect(doc.meta.layoutProfile).toBe('left-to-right')
+    expect(graphCenterX(graphNode(doc, 'trigger'))).toBeLessThan(graphCenterX(graphNode(doc, 'risk')))
+    expect(graphCenterX(graphNode(doc, 'risk'))).toBeLessThan(graphCenterX(graphNode(doc, 'formal-report')))
+    expect(doc.edges.get('trigger-risk')).toMatchObject({
+      sourceAnchor: { side: 'right', offset: 0.5 },
+      targetAnchor: { side: 'left', offset: 0.5 },
+    })
+    expect(graphNode(doc, 'start').x * doc.viewport.zoom + doc.viewport.x).toBeGreaterThanOrEqual(72)
+  })
+
+  it('applies Swimlane layout as an explicit top-to-bottom action', async () => {
+    const { result } = renderHook(() => useCanvasState({ initialDocument: makeSwimlaneDocument() }))
+
+    await act(async () => {
+      result.current.applySwimlaneLayout()
+    })
+
+    const doc = result.current.document
+    expect(doc.meta.layoutProfile).toBe('swimlane')
+    expect(graphNode(doc, 'a2').y).toBeGreaterThan(graphNode(doc, 'a1').y)
+    expect(graphCenterX(graphNode(doc, 'a2'))).toBeCloseTo(graphCenterX(graphNode(doc, 'a1')), 0)
+    expect(doc.edges.get('a1-a2')).toMatchObject({
+      sourceAnchor: { side: 'bottom', offset: 0.5 },
+      targetAnchor: { side: 'top', offset: 0.5 },
+    })
+    expect(120 * doc.viewport.zoom + doc.viewport.x).toBeGreaterThanOrEqual(36)
+    expect(100 * doc.viewport.zoom + doc.viewport.y).toBeGreaterThanOrEqual(56)
+  })
+
+  it('migrateDecisionPorts: legacy decision gets four edge ports', () => {
     const legacy: GraphDocument = {
       ...createEmptyDocument('mig-test'),
       nodes: new Map<string, GraphNode>([
@@ -340,7 +547,7 @@ describe('useCanvasState', () => {
     }
     const migrated = migrateDecisionPorts(legacy)
     const d1 = migrated.nodes.get('d1')!
-    expect(d1.ports.map((p) => p.side)).toEqual(['left', 'right'])
+    expect(d1.ports.map((p) => p.side)).toEqual(['top', 'left', 'right', 'bottom'])
   })
 
   it('migrateDecisionPorts: returns the same doc when no migration needed', () => {
@@ -375,7 +582,7 @@ describe('useCanvasState', () => {
 
     const created = Array.from(result.current.document.nodes.values()).find((node) => node.type === 'decision')
     expect(created).toBeTruthy()
-    expect(getPortPosition(created!, 'in')).toEqual(dropPoint)
+    expect(getPortPosition(created!, 'in')).toEqual({ ...dropPoint, side: 'left' })
     expect(result.current.edges).toHaveLength(1)
     expect(result.current.edges[0]).toMatchObject({
       source: 'start',

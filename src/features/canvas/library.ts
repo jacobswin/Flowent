@@ -1,6 +1,7 @@
 // Pure helpers for the library tree. No JSX, no React, no fetch —
 // trivially testable. Types are inlined here so this file compiles in the
 // browser tsconfig (which doesn't include the server directory).
+import type { SharedElementLibrary } from './sharedElements'
 
 export type SavedFolder = {
   id: string
@@ -27,6 +28,7 @@ export type SavedMap = {
 export type SavedLibrary = {
   folders: SavedFolder[]
   maps: SavedMap[]
+  elementLibrary?: SharedElementLibrary
 }
 
 export type LibraryNode =

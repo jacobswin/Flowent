@@ -13,7 +13,6 @@ function CanvasLoading() {
     <div className="canvas-container">
       <div className="canvas-header">
         <h1 className="canvas-title">Flowent</h1>
-        <p className="canvas-subtitle">Process maps for aligned product teams</p>
       </div>
       <div className="canvas-loading">Loading canvas…</div>
     </div>

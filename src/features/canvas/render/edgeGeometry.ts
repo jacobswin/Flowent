@@ -1,5 +1,7 @@
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 import { getPortAnchor } from '../routing/ports'
+import { getEdgeLabelAnchor } from '../routing/edgeLabelAnchor'
+import { routeOrthogonalEdge, type RoutePoint } from '../routing/orthogonalRouter'
 
 export interface EdgeControlPoints {
   from: { x: number; y: number }
@@ -9,13 +11,10 @@ export interface EdgeControlPoints {
 }
 
 export function getEdgeControlPoints(edge: GraphEdge, nodesById: Map<string, GraphNode>): EdgeControlPoints | null {
-  const source = nodesById.get(edge.sourceNodeId)
-  const target = nodesById.get(edge.targetNodeId)
-  if (!source || !target) return null
-
-  const from = getPortAnchor(source, edge.sourcePortId, 'source')
-  const to = getPortAnchor(target, edge.targetPortId, 'target')
-
+  const route = getEdgeRoutePoints(edge, nodesById)
+  if (!route || route.length < 2) return null
+  const from = route[0]
+  const to = route[route.length - 1]
   return {
     from: { x: from.x, y: from.y },
     to: { x: to.x, y: to.y },
@@ -24,20 +23,33 @@ export function getEdgeControlPoints(edge: GraphEdge, nodesById: Map<string, Gra
   }
 }
 
-export function getEdgeLabelCenter(edge: GraphEdge, nodesById: Map<string, GraphNode>): { x: number; y: number } | null {
-  const points = getEdgeControlPoints(edge, nodesById)
-  if (!points) return null
+export function getEdgeRoutePoints(edge: GraphEdge, nodesById: Map<string, GraphNode>): RoutePoint[] | null {
+  const source = nodesById.get(edge.sourceNodeId)
+  const target = nodesById.get(edge.targetNodeId)
+  if (!source || !target) return null
 
-  const t = 0.5
-  const u = 1 - t
-  return {
-    x: u * u * u * points.from.x
-      + 3 * u * u * t * points.cp1.x
-      + 3 * u * t * t * points.cp2.x
-      + t * t * t * points.to.x,
-    y: u * u * u * points.from.y
-      + 3 * u * u * t * points.cp1.y
-      + 3 * u * t * t * points.cp2.y
-      + t * t * t * points.to.y,
-  }
+  const from = getPortAnchor(source, edge.sourcePortId, 'source', edge.sourceAnchor)
+  const to = getPortAnchor(target, edge.targetPortId, 'target', edge.targetAnchor)
+
+  return routeOrthogonalEdge({
+    source: { x: from.x, y: from.y },
+    sourceSide: from.side,
+    target: { x: to.x, y: to.y },
+    targetSide: to.side,
+    obstacles: Array.from(nodesById.values())
+      .filter((node) => node.id !== source.id && node.id !== target.id)
+      .map((node) => ({
+        id: node.id,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+      })),
+  })
+}
+
+export function getEdgeLabelCenter(edge: GraphEdge, nodesById: Map<string, GraphNode>): { x: number; y: number } | null {
+  const route = getEdgeRoutePoints(edge, nodesById)
+  if (!route) return null
+  return getEdgeLabelAnchor(route) ?? null
 }

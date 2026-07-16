@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  EdgeEndpointAnchor,
   GraphCommand,
   GraphDocument,
   GraphEdge,
@@ -10,18 +11,26 @@ import type {
   MilestoneAsset,
   ProcessEdge,
   ProcessNode,
+  ProcessStageData,
   ReviewStatus,
   WorkProductAsset,
 } from './canvasTypes'
+import type { SharedElementLibrary, SharedProcess } from './sharedElements'
+import { insertSharedProcessInstance, syncSharedProcessInstances } from './sharedProcessProjection'
 import { runCommand } from './engine/commands'
 import { createEmptyDocument } from './engine/graphDocument'
 import { planConnectedNodeFromPort, planQuickCreate } from './engine/quickCreate'
 import { createHistoryState, pushHistory, redo, type HistoryState, setPresent, undo } from './engine/history'
 import { layoutGraph } from './layout/autoLayout'
-import { createGraphNode, createHandoffEdge, type ProcessElementType } from './processElements'
+import { layoutFlowGraph } from './layout/flowLayout'
+import { layoutSwimlaneGraph } from './layout/swimlaneLayout'
+import { getLayoutViewport } from './layout/layoutViewport'
+import { createGraphNode, createHandoffEdge, getPortsForNodeType, type ProcessElementType } from './processElements'
+import { addNodeToContainingStage, detachNodeFromMapStages } from './stageContainers'
 import { collectRoles, deriveProcessFocus, type ProcessFocusState } from './focus/processFocus'
 import { getProcessMapDiagnostics } from './diagnostics/processMapDiagnostics'
 import { getBottleneckMetrics } from './diagnostics/bottleneckMetrics'
+import { analyzeProcessStages } from './diagnostics/processIntelligence'
 import { buildActivationSnapshot, deriveActivationStatus, isActivationEligible, type ActivationState } from './activation/processActivation'
 import { DEFAULT_EDGE_COLOR } from './edgeColors'
 import {
@@ -29,6 +38,7 @@ import {
   addMilestoneAsset,
   addResponsibility,
   addWorkProductAsset,
+  collectResponsibilityRoleTags,
   DEFAULT_WORK_PRODUCT_MATURITY,
   deleteGuidanceAsset,
   deleteMilestoneAsset,
@@ -41,6 +51,7 @@ import {
   linkGuidanceToWorkProduct,
   linkWorkProductToActivity,
   linkWorkProductToHandoff,
+  normalizeActivityResponsibilities,
   renameGuidanceAsset,
   renameMilestoneAsset,
   renameWorkProductAsset,
@@ -70,6 +81,46 @@ type ProcessAssetRelation =
   | 'stage'
   | 'workProductState'
 type ProcessAssetRelationOptions = { maturity?: string }
+const MIN_ZOOM = 0.05
+const MAX_ZOOM = 5
+
+function clampZoom(zoom: number): number {
+  return Math.min(Math.max(zoom, MIN_ZOOM), MAX_ZOOM)
+}
+
+function dirtyMeta(meta: GraphDocument['meta']): GraphDocument['meta'] {
+  return { ...meta, dirty: true, version: meta.version + 1 }
+}
+
+function shouldRepairCollapsedVerticalLayout(doc: GraphDocument): boolean {
+  if (doc.meta.layoutProfile === 'generated-flow' || doc.meta.layoutProfile === 'swimlane') return false
+
+  const nodes = Array.from(doc.nodes.values())
+  if (nodes.length < 8) return false
+
+  const xBuckets = new Set(nodes.map((node) => Math.round(node.x / 50) * 50)).size
+  const yBuckets = new Set(nodes.map((node) => Math.round(node.y / 50) * 50)).size
+  if (xBuckets > 3 || yBuckets < 8) return false
+
+  const order = new Map<string, number>()
+  let nextOrder = 1
+  for (const node of nodes) {
+    if (node.id === 'start') {
+      order.set(node.id, 0)
+    } else if (node.id === 'end') {
+      order.set(node.id, nodes.length + 1)
+    } else {
+      order.set(node.id, nextOrder)
+      nextOrder += 1
+    }
+  }
+
+  return Array.from(doc.edges.values()).some((edge) => {
+    const sourceOrder = order.get(edge.sourceNodeId)
+    const targetOrder = order.get(edge.targetNodeId)
+    return sourceOrder != null && targetOrder != null && sourceOrder >= targetOrder
+  })
+}
 
 function toProcessNode(node: GraphNode, doc: GraphDocument): ProcessNode {
   if (node.type === 'activity') {
@@ -84,6 +135,7 @@ function toProcessNode(node: GraphNode, doc: GraphDocument): ProcessNode {
         roleIds: node.roleTags,
         responsibilities,
         expectations: node.expectations ?? '',
+        processStage: node.processStage,
         assetSummary: getNodeAssetSummary(doc, node.id),
         kind: 'activity',
       },
@@ -116,6 +168,9 @@ function toProcessNode(node: GraphNode, doc: GraphDocument): ProcessNode {
         entryCondition: node.entryCondition ?? '',
         exitCondition: node.exitCondition ?? '',
         owner: node.owner ?? '',
+        ownerRoleId: node.ownerRoleId,
+        memberNodeIds: node.memberNodeIds ?? [],
+        stagePadding: node.stagePadding,
         assetSummary: getNodeAssetSummary(doc, node.id),
         kind: 'stage',
       },
@@ -164,6 +219,8 @@ function toProcessEdge(edge: GraphEdge, doc: GraphDocument): ProcessEdge {
     data: {
       label: edge.label,
       color: edge.color ?? DEFAULT_EDGE_COLOR,
+      sourceAnchor: edge.sourceAnchor,
+      targetAnchor: edge.targetAnchor,
       fromRole: edge.fromRole ?? '',
       toRole: edge.toRole ?? '',
       artifact: edge.artifact ?? '',
@@ -185,42 +242,48 @@ function isReviewStatus(value: unknown): value is ReviewStatus {
 }
 
 /**
- * Migrate older decision nodes (which had a 3-port schema with `yes`/
- * `no` outputs on top/bottom) to the new 2-port schema with only
- * `in` (left) and `out` (right). Without this, decision nodes saved by
- * an earlier version of Flowent keep showing three ports on the canvas
- * even after the port schema is updated. Exported for unit tests.
+ * Migrates older node-port shapes to the current four-side schema. The
+ * exported name is kept for compatibility with older callers that only knew
+ * about decision-port migration.
  */
 export function migrateDecisionPorts(doc: GraphDocument): GraphDocument {
-  let needsMigration = false
-  for (const node of doc.nodes.values()) {
-    if (node.type === 'decision' && node.ports.length !== 2) {
-      needsMigration = true
-      break
-    }
-  }
-  if (!needsMigration) return doc
-
+  let changed = false
   const nodes = new Map(doc.nodes)
+  const portRemap = new Map<string, Map<string, string>>()
+
   for (const [id, node] of nodes) {
-    if (node.type === 'decision') {
-      nodes.set(id, {
-        ...node,
-        ports: [
-          { id: 'in', side: 'left' },
-          { id: 'out', side: 'right' },
-        ],
-      })
+    const nextPorts = getPortsForNodeType(node.type)
+    const samePorts =
+      node.ports.length === nextPorts.length &&
+      node.ports.every((port, index) => port.id === nextPorts[index].id && port.side === nextPorts[index].side)
+    if (samePorts) continue
+
+    changed = true
+    const nodeRemap = new Map<string, string>()
+    for (const oldPort of node.ports) {
+      const nextPort = nextPorts.find((port) => port.side === oldPort.side)
+      if (nextPort) nodeRemap.set(oldPort.id, nextPort.id)
+    }
+    portRemap.set(id, nodeRemap)
+    nodes.set(id, { ...node, ports: nextPorts })
+  }
+
+  if (!changed) return doc
+
+  const edges = new Map(doc.edges)
+  for (const [id, edge] of edges) {
+    const sourcePortId = portRemap.get(edge.sourceNodeId)?.get(edge.sourcePortId) ?? edge.sourcePortId
+    const targetPortId = portRemap.get(edge.targetNodeId)?.get(edge.targetPortId) ?? edge.targetPortId
+    if (sourcePortId !== edge.sourcePortId || targetPortId !== edge.targetPortId) {
+      edges.set(id, { ...edge, sourcePortId, targetPortId })
     }
   }
-  // Mark the doc dirty so the autosave loop persists the migrated shape
-  // back to the server. Without this, the in-memory doc is migrated but
-  // the disk file keeps the legacy 3-port schema, so the next reload
-  // re-runs the migration (still works, but a wasted PATCH round-trip).
+
   return {
     ...doc,
     nodes,
-    meta: { dirty: true, version: doc.meta.version + 1 },
+    edges,
+    meta: dirtyMeta(doc.meta),
   }
 }
 
@@ -228,21 +291,7 @@ function createInitialDocument(): GraphDocument {
   const empty = createEmptyDocument('flowent-canvas')
   return runCommand(empty, {
     type: 'AddNode',
-    payload: {
-      id: 'start',
-      type: 'start',
-      // Place the start node in the upper-left of the visible canvas,
-      // away from the floating toolbar at top: 16px. The header (title
-      // and subtitle) takes up the left side, so a horizontal offset
-      // keeps the node clear of both.
-      x: 360,
-      y: 200,
-      width: 120,
-      height: 56,
-      title: 'Start',
-      roleTags: [],
-      ports: [{ id: 'out', side: 'right' }],
-    },
+    payload: createGraphNode('start', 'start', { x: 360, y: 200 }),
   })
 }
 
@@ -257,11 +306,15 @@ type NodeDataPatch = {
   goal?: string
   entryCondition?: string
   exitCondition?: string
+  ownerRoleId?: string
+  memberNodeIds?: string[]
+  stagePadding?: number
   symptom?: string
   impact?: string
   suspectedCause?: string
   reviewStatus?: ReviewStatus
   responsibilities?: ActivityResponsibility[]
+  processStage?: ProcessStageData
 }
 
 interface UseCanvasStateOptions {
@@ -298,6 +351,21 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const roles = useMemo(() => collectRoles(document), [document])
   const diagnostics = useMemo(() => getProcessMapDiagnostics(document), [document])
   const bottleneckMetrics = useMemo(() => getBottleneckMetrics(document), [document])
+  const processIntelligence = useMemo(() => {
+    const activities = Array.from(document.nodes.values()).filter((node) => node.type === 'activity')
+    const hasAnalysisData = Boolean(document.meta.processAnalysis) || activities.some((node) => node.processStage)
+    if (!hasAnalysisData) return null
+    return analyzeProcessStages(
+      activities.map((node) => ({
+        nodeId: node.id,
+        title: node.title,
+        kind: node.processStage?.kind ?? 'value-add',
+        durationMinutesP50: node.processStage?.durationMinutesP50,
+        durationMinutesP90: node.processStage?.durationMinutesP90,
+      })),
+      document.meta.processAnalysis,
+    )
+  }, [document])
   const activation = useMemo(
     () => deriveActivationStatus(document, activationSnapshot),
     [document, activationSnapshot],
@@ -375,11 +443,17 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   )
 
   const onConnect = useCallback(
-    (sourceNodeId: string, targetNodeId: string, sourcePortId = 'out', targetPortId = 'in') => {
+    (
+      sourceNodeId: string,
+      targetNodeId: string,
+      sourcePortId = 'out',
+      targetPortId = 'in',
+      anchors: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor } = {},
+    ) => {
       const edgeId = `edge-${Date.now()}`
       applyCommand({
         type: 'AddEdge',
-        payload: createHandoffEdge(edgeId, sourceNodeId, sourcePortId, targetNodeId, targetPortId),
+        payload: createHandoffEdge(edgeId, sourceNodeId, sourcePortId, targetNodeId, targetPortId, anchors),
       })
     },
     [applyCommand],
@@ -453,7 +527,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       ...current.present,
       selectedNodeIds: new Set(),
       selectedEdgeIds: new Set(),
-      meta: { dirty: true, version: current.present.meta.version + 1 },
+      meta: dirtyMeta(current.present.meta),
     }))
     setEditorNodeId(null)
     setEditorEdgeId(null)
@@ -537,6 +611,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     sourcePortId: string,
     targetType: ProcessElementType,
     dropPosition: { x: number; y: number },
+    sourceAnchor?: EdgeEndpointAnchor,
   ) => {
     setHistory((current) => {
       const newNodeId = `${targetType}-${Date.now()}`
@@ -548,6 +623,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         newNodeId,
         newEdgeId,
         dropPosition,
+        sourceAnchor,
       })
 
       let next = runCommand(current.present, { type: 'AddNode', payload: plan.node })
@@ -580,7 +656,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
           ...next,
           nodes,
           edges,
-          meta: { dirty: true, version: next.meta.version + 1 },
+          meta: dirtyMeta(next.meta),
         }
       }
 
@@ -590,7 +666,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         next = {
           ...next,
           edges,
-          meta: { dirty: true, version: next.meta.version + 1 },
+          meta: dirtyMeta(next.meta),
         }
       }
 
@@ -610,6 +686,9 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const updateNodeData = useCallback(
     (nodeId: string, data: NodeDataPatch) => {
+      const responsibilities = Array.isArray(data.responsibilities)
+        ? normalizeActivityResponsibilities(data.responsibilities, { nodeId })
+        : null
       applyCommand({
         type: 'UpdateNode',
         payload: {
@@ -620,19 +699,23 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
             ...(typeof data.criteria === 'string' ? { criteria: data.criteria } : {}),
             ...(Array.isArray(data.decisionOutcomes) ? { decisionOutcomes: data.decisionOutcomes } : {}),
             ...(Array.isArray(data.roleIds) ? { roleTags: data.roleIds } : {}),
-            ...(Array.isArray(data.responsibilities) ? {
-              responsibilities: data.responsibilities,
-              roleTags: data.responsibilities.map((responsibility) => responsibility.roleName),
+            ...(responsibilities ? {
+              responsibilities,
+              roleTags: collectResponsibilityRoleTags(responsibilities),
             } : {}),
             ...(typeof data.expectations === 'string' ? { expectations: data.expectations } : {}),
             ...(typeof data.owner === 'string' ? { owner: data.owner } : {}),
             ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
             ...(typeof data.entryCondition === 'string' ? { entryCondition: data.entryCondition } : {}),
             ...(typeof data.exitCondition === 'string' ? { exitCondition: data.exitCondition } : {}),
+            ...(typeof data.ownerRoleId === 'string' || data.ownerRoleId === undefined && Object.hasOwn(data, 'ownerRoleId') ? { ownerRoleId: data.ownerRoleId } : {}),
+            ...(Array.isArray(data.memberNodeIds) ? { memberNodeIds: data.memberNodeIds } : {}),
+            ...(typeof data.stagePadding === 'number' ? { stagePadding: data.stagePadding } : {}),
             ...(typeof data.symptom === 'string' ? { symptom: data.symptom } : {}),
             ...(typeof data.impact === 'string' ? { impact: data.impact } : {}),
             ...(typeof data.suspectedCause === 'string' ? { suspectedCause: data.suspectedCause } : {}),
             ...(isReviewStatus(data.reviewStatus) ? { reviewStatus: data.reviewStatus } : {}),
+            ...(isProcessStageData(data.processStage) ? { processStage: data.processStage } : {}),
           },
         },
       })
@@ -643,8 +726,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   type EdgeDataPatch = {
     sourceNodeId?: string
     sourcePortId?: string
+    sourceAnchor?: EdgeEndpointAnchor
     targetNodeId?: string
     targetPortId?: string
+    targetAnchor?: EdgeEndpointAnchor
     label?: string
     color?: string
     fromRole?: string
@@ -665,8 +750,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
           patch: {
             ...(typeof data.sourceNodeId === 'string' ? { sourceNodeId: data.sourceNodeId } : {}),
             ...(typeof data.sourcePortId === 'string' ? { sourcePortId: data.sourcePortId } : {}),
+            ...(data.sourceAnchor ? { sourceAnchor: data.sourceAnchor } : {}),
             ...(typeof data.targetNodeId === 'string' ? { targetNodeId: data.targetNodeId } : {}),
             ...(typeof data.targetPortId === 'string' ? { targetPortId: data.targetPortId } : {}),
+            ...(data.targetAnchor ? { targetAnchor: data.targetAnchor } : {}),
             ...(typeof data.label === 'string' ? { label: data.label } : {}),
             ...(typeof data.color === 'string' ? { color: data.color } : {}),
             ...(typeof data.fromRole === 'string' ? { fromRole: data.fromRole } : {}),
@@ -711,37 +798,86 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     setEditorEdgeId(null)
   }, [])
 
-  const autoLayout = useCallback(async () => {
-    const graphNodes = Array.from(document.nodes.values())
-    const graphEdges = Array.from(document.edges.values())
-
-    if (graphNodes.length === 0) return
-
-    const result = await layoutGraph({ nodes: graphNodes, edges: graphEdges })
+  const applyFlowLayout = useCallback(async () => {
+    if (document.nodes.size === 0) return
+    const laidOut = await layoutFlowGraph(document)
 
     setHistory((current) => {
-      let next = current.present
-      for (const pos of result.nodes) {
-        const node = next.nodes.get(pos.id)
-        if (node) {
-          next = runCommand(next, {
-            type: 'UpdateNode',
-            payload: { id: pos.id, patch: { x: pos.x, y: pos.y } },
-          })
-        }
-      }
-
-      if (next === current.present) return current
-      return pushHistory(current, next)
+      if (current.present.id !== document.id) return current
+      return pushHistory(current, {
+        ...laidOut,
+        viewport: getLayoutViewport(
+          Array.from(laidOut.nodes.values()),
+          'left-to-right',
+          current.present.viewport,
+        ),
+        meta: dirtyMeta(laidOut.meta),
+      })
     })
+  }, [document])
+
+  const applySwimlaneLayout = useCallback(() => {
+    setHistory((current) => {
+      if (current.present.nodes.size === 0) return current
+      const laidOut = layoutSwimlaneGraph(current.present)
+      return pushHistory(current, {
+        ...laidOut,
+        viewport: getLayoutViewport(
+          Array.from(laidOut.nodes.values()),
+          'swimlane',
+          current.present.viewport,
+        ),
+        meta: dirtyMeta(laidOut.meta),
+      })
+    })
+  }, [])
+
+  const autoLayout = applyFlowLayout
+
+  const repairedCollapsedLayoutIds = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (repairedCollapsedLayoutIds.current.has(document.id)) return
+    if (!shouldRepairCollapsedVerticalLayout(document)) return
+    repairedCollapsedLayoutIds.current.add(document.id)
+
+    let cancelled = false
+    void layoutGraph({
+      nodes: Array.from(document.nodes.values()),
+      edges: Array.from(document.edges.values()),
+    }).then((layout) => {
+      if (cancelled) return
+      setHistory((current) => {
+        if (current.present.id !== document.id) return current
+        if (!shouldRepairCollapsedVerticalLayout(current.present)) return current
+
+        const nodes = new Map(current.present.nodes)
+        for (const pos of layout.nodes) {
+          const node = nodes.get(pos.id)
+          if (node) nodes.set(pos.id, { ...node, x: pos.x, y: pos.y })
+        }
+
+        return pushHistory(current, {
+          ...current.present,
+          nodes,
+          selectedNodeIds: new Set(),
+          selectedEdgeIds: new Set(),
+          viewport: { x: 0, y: 0, zoom: 1 },
+          meta: dirtyMeta(current.present.meta),
+        })
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [document])
 
   const zoomIn = useCallback(() => {
     setHistory((current) => {
-      const newZoom = Math.min(current.present.viewport.zoom * 1.2, 3)
+      const newZoom = clampZoom(current.present.viewport.zoom * 1.2)
       return setPresent(current, {
         ...current.present,
-        meta: { dirty: true, version: current.present.meta.version + 1 },
+        meta: dirtyMeta(current.present.meta),
         viewport: { ...current.present.viewport, zoom: newZoom },
       })
     })
@@ -749,10 +885,10 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
   const zoomOut = useCallback(() => {
     setHistory((current) => {
-      const newZoom = Math.max(current.present.viewport.zoom / 1.2, 0.2)
+      const newZoom = clampZoom(current.present.viewport.zoom / 1.2)
       return setPresent(current, {
         ...current.present,
-        meta: { dirty: true, version: current.present.meta.version + 1 },
+        meta: dirtyMeta(current.present.meta),
         viewport: { ...current.present.viewport, zoom: newZoom },
       })
     })
@@ -762,10 +898,23 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     setHistory((current) =>
       setPresent(current, {
         ...current.present,
-        meta: { dirty: true, version: current.present.meta.version + 1 },
+        meta: dirtyMeta(current.present.meta),
         viewport: { x: 0, y: 0, zoom: 1 },
       }),
     )
+  }, [])
+
+  const zoomToPercent = useCallback((percent: number) => {
+    if (!Number.isFinite(percent)) return
+    setHistory((current) => {
+      const newZoom = clampZoom(Math.round(percent) / 100)
+      if (newZoom === current.present.viewport.zoom) return current
+      return setPresent(current, {
+        ...current.present,
+        meta: dirtyMeta(current.present.meta),
+        viewport: { ...current.present.viewport, zoom: newZoom },
+      })
+    })
   }, [])
 
   /**
@@ -775,7 +924,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
   const zoomAt = useCallback((factor: number, screenX: number, screenY: number) => {
     setHistory((current) => {
       const viewport = current.present.viewport
-      const newZoom = Math.max(0.2, Math.min(3, viewport.zoom * factor))
+      const newZoom = clampZoom(viewport.zoom * factor)
       if (newZoom === viewport.zoom) return current
 
       // World point under cursor before zoom stays under cursor after zoom.
@@ -786,7 +935,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
 
       return setPresent(current, {
         ...current.present,
-        meta: { dirty: true, version: current.present.meta.version + 1 },
+        meta: dirtyMeta(current.present.meta),
         viewport: { x: nextX, y: nextY, zoom: newZoom },
       })
     })
@@ -796,7 +945,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     setHistory((current) =>
       setPresent(current, {
         ...current.present,
-        meta: { dirty: true, version: current.present.meta.version + 1 },
+        meta: dirtyMeta(current.present.meta),
         viewport: {
           x: current.present.viewport.x + dx,
           y: current.present.viewport.y + dy,
@@ -804,6 +953,25 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         },
       }),
     )
+  }, [])
+
+  const replaceDocument = useCallback((nextDocument: GraphDocument) => {
+    const migrated = migrateDecisionPorts({
+      ...nextDocument,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      meta: {
+        ...nextDocument.meta,
+        dirty: true,
+        version: nextDocument.meta.version + 1,
+      },
+    })
+    setHistory(createHistoryState(migrated))
+    liveSelectedNodeIds.current = new Set()
+    setEditorNodeId(null)
+    setEditorEdgeId(null)
+    setSelectedAsset(null)
+    setConnectionStart(null)
   }, [])
 
   const selectNodesInRect = useCallback(
@@ -826,7 +994,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
         return pushHistory(current, {
           ...current.present,
           selectedNodeIds,
-          meta: { dirty: true, version: current.present.meta.version + 1 },
+          meta: dirtyMeta(current.present.meta),
         })
       })
     },
@@ -862,9 +1030,60 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     })
   }, [])
 
+  const beginNodeDrag = useCallback((nodeId: string) => {
+    mutateDocument((doc) => detachNodeFromMapStages(doc, nodeId))
+  }, [mutateDocument])
+
+  const completeNodeDrag = useCallback((nodeId: string) => {
+    mutateDocument((doc) => addNodeToContainingStage(doc, nodeId))
+  }, [mutateDocument])
+
   const createId = useCallback((prefix: string) => (
     `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   ), [])
+
+  const insertSharedProcess = useCallback((
+    process: SharedProcess,
+    library: SharedElementLibrary,
+    position: { x: number; y: number } = { x: 320, y: 240 },
+  ) => {
+    const instanceId = createId('process-instance')
+    mutateDocument((doc) => insertSharedProcessInstance(doc, process, instanceId, position, library))
+  }, [createId, mutateDocument])
+
+  const syncSharedProcesses = useCallback((library: SharedElementLibrary) => {
+    mutateDocument((doc) => syncSharedProcessInstances(doc, library))
+  }, [mutateDocument])
+
+  const removeSharedProcessInstance = useCallback((instanceId: string) => {
+    mutateDocument((doc) => {
+      const instance = doc.processInstances[instanceId]
+      if (!instance) return doc
+      const removedNodeIds = new Set([
+        ...Object.values(instance.nodeIdsByPlacement),
+        ...Object.values(instance.nodeIdsByDecision ?? {}),
+        ...Object.values(instance.stageNodeIdsByStage ?? {}),
+      ])
+      const nodes = new Map(doc.nodes)
+      for (const nodeId of removedNodeIds) nodes.delete(nodeId)
+      const edges = new Map(Array.from(doc.edges.entries()).filter(([, edge]) =>
+        edge.processInstanceId !== instanceId &&
+        !removedNodeIds.has(edge.sourceNodeId) &&
+        !removedNodeIds.has(edge.targetNodeId),
+      ))
+      const processInstances = { ...doc.processInstances }
+      delete processInstances[instanceId]
+      return {
+        ...doc,
+        nodes,
+        edges,
+        processInstances,
+        selectedNodeIds: new Set(Array.from(doc.selectedNodeIds).filter((id) => nodes.has(id))),
+        selectedEdgeIds: new Set(Array.from(doc.selectedEdgeIds).filter((id) => edges.has(id))),
+        meta: dirtyMeta(doc.meta),
+      }
+    })
+  }, [mutateDocument])
 
   const addActivityResponsibility = useCallback((
     nodeId: string,
@@ -1178,6 +1397,7 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     activationEligible,
     activateMap,
     bottleneckMetrics,
+    processIntelligence,
     marquee,
     connectorMode,
     connectionStart,
@@ -1202,6 +1422,9 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
     addDecision,
     addEnd,
     addNodeByType,
+    insertSharedProcess,
+    syncSharedProcesses,
+    removeSharedProcessInstance,
     addStage,
     addBottleneck,
     quickCreate,
@@ -1239,16 +1462,31 @@ export function useCanvasState(options: UseCanvasStateOptions = {}) {
       selectObjectTarget: selectProcessObjectTarget,
     },
     moveSelectedNodes,
+    beginNodeDrag,
+    completeNodeDrag,
     undo: undoAction,
     redo: redoAction,
     autoLayout,
+    applyFlowLayout,
+    applySwimlaneLayout,
     zoomIn,
     zoomOut,
     zoomReset,
+    zoomToPercent,
     zoomAt,
     panBy,
+    replaceDocument,
     viewport: document.viewport,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
   }
+}
+
+function isProcessStageData(value: unknown): value is ProcessStageData {
+  if (!value || typeof value !== 'object') return false
+  const stage = value as ProcessStageData
+  if (!['value-add', 'wait', 'rework'].includes(stage.kind)) return false
+  if (!['explicit', 'inferred'].includes(stage.classificationSource)) return false
+  return [stage.durationMinutesP50, stage.durationMinutesP90]
+    .every((duration) => duration == null || (Number.isFinite(duration) && duration > 0))
 }

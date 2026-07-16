@@ -1,7 +1,8 @@
 import type { Graphics } from 'pixi.js'
-import type { ConnectionCreateRequest, GraphEdge, GraphNode } from './canvasTypes'
-import { getEdgeControlPoints } from './render/edgeGeometry'
+import type { ConnectionCreateRequest, EdgeEndpointAnchor, GraphEdge, GraphNode } from './canvasTypes'
+import { getEdgeRoutePoints } from './render/edgeGeometry'
 import { getPortPosition } from './render/drawEdges'
+import { getBoundaryAnchor } from './routing/ports'
 
 interface CanvasLike {
   viewport: { x: number; y: number; zoom: number }
@@ -11,10 +12,18 @@ interface CanvasLike {
   zoomAt: (factor: number, screenX: number, screenY: number) => void
   panBy: (dx: number, dy: number) => void
   moveSelectedNodes: (dx: number, dy: number) => void
+  beginNodeDrag?: (nodeId: string) => void
+  completeNodeDrag?: (nodeId: string) => void
   onNodeClick: (nodeId: string, additive: boolean) => void
   onEdgeClick: (edgeId: string, additive: boolean) => void
   openEditor: (nodeId: string) => void
-  onConnect: (sourceNodeId: string, targetNodeId: string, sourcePortId?: string, targetPortId?: string) => void
+  onConnect: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    sourcePortId?: string,
+    targetPortId?: string,
+    anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor },
+  ) => void
   startConnection: (nodeId: string, portId: string) => void
   cancelConnection: () => void
   openConnectionCreateMenu: (request: ConnectionCreateRequest) => void
@@ -55,14 +64,15 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     startY: 0,
   }
 
-  const nodeDragState: { dragging: boolean; startX: number; startY: number; nodeId: string | null } = {
+  const nodeDragState: { dragging: boolean; detachedFromStage: boolean; startX: number; startY: number; nodeId: string | null } = {
     dragging: false,
+    detachedFromStage: false,
     startX: 0,
     startY: 0,
     nodeId: null,
   }
 
-  const clickConnectionState: { sourceNodeId: string | null; sourcePortId: string | null } = {
+  const clickConnectionState: { sourceNodeId: string | null; sourcePortId: string | null; sourceAnchor?: EdgeEndpointAnchor } = {
     sourceNodeId: null,
     sourcePortId: null,
   }
@@ -70,13 +80,16 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   const connectionDragState: {
     active: boolean
     moved: boolean
+    previewStarted: boolean
     sourceNodeId: string | null
     sourcePortId: string | null
+    sourceAnchor?: EdgeEndpointAnchor
     startX: number
     startY: number
   } = {
     active: false,
     moved: false,
+    previewStarted: false,
     sourceNodeId: null,
     sourcePortId: null,
     startX: 0,
@@ -128,13 +141,16 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   const clearClickConnection = () => {
     clickConnectionState.sourceNodeId = null
     clickConnectionState.sourcePortId = null
+    clickConnectionState.sourceAnchor = undefined
   }
 
   const clearConnectionDrag = () => {
     connectionDragState.active = false
     connectionDragState.moved = false
+    connectionDragState.previewStarted = false
     connectionDragState.sourceNodeId = null
     connectionDragState.sourcePortId = null
+    connectionDragState.sourceAnchor = undefined
   }
 
   const clearConnectionGesture = () => {
@@ -146,18 +162,21 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   const sourcePortAllowsConnectedNodeMenu = (nodeId: string, portId: string) => {
     const sourceNode = graphNodesRef.current.find((node) => node.id === nodeId)
     const sourcePort = sourceNode?.ports.find((port) => port.id === portId)
-    return sourcePort?.side === 'right'
+    return Boolean(sourcePort)
   }
 
   const buildConnectionCreateRequest = (
     sourceNodeId: string,
     sourcePortId: string,
     event: Pick<PointerEvent | MouseEvent, 'clientX' | 'clientY'>,
+    sourceAnchor?: EdgeEndpointAnchor,
   ): ConnectionCreateRequest => ({
     sourceNodeId,
     sourcePortId,
+    ...(sourceAnchor ? { sourceAnchor } : {}),
     worldPosition: screenToWorld(event.clientX, event.clientY),
     screenPosition: eventToCanvasPoint(event),
+    clientPosition: { x: event.clientX, y: event.clientY },
   })
 
   const isCanvasTarget = (event: Event) => {
@@ -169,7 +188,7 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     const c = getCanvas()
     const point = eventToCanvasPoint(event)
     return Boolean(
-      findPortAtPosition(point.x, point.y, graphNodesRef.current, c.viewport) ||
+      findConnectionAnchorAtPosition(point.x, point.y, graphNodesRef.current, c.viewport) ||
         findNodeAtPosition(point.x, point.y, graphNodesRef.current, '', c.viewport),
     )
   }
@@ -178,6 +197,25 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     const c = getCanvas()
     const point = eventToCanvasPoint(event)
     return Boolean(findEdgeAtPosition(point.x, point.y, graphEdgesRef.current, graphNodesRef.current, c.viewport))
+  }
+
+  const isOverInteractiveCanvasContent = (event: PointerEvent) =>
+    isOverNodeOrPort(event) || isOverEdge(event)
+
+  const updateNodeHoverTitle = (event: PointerEvent) => {
+    if (!isCanvasTarget(event)) {
+      pixiCanvasEl.removeAttribute('title')
+      return
+    }
+
+    const c = getCanvas()
+    const point = eventToCanvasPoint(event)
+    const node = findNodeAtPosition(point.x, point.y, graphNodesRef.current, '', c.viewport)
+    if (node?.title) {
+      pixiCanvasEl.title = node.title
+    } else {
+      pixiCanvasEl.removeAttribute('title')
+    }
   }
 
   const shouldStartPan = (event: PointerEvent) => {
@@ -254,12 +292,14 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     if (shouldClickPane && clickConnectionState.sourceNodeId && clickConnectionState.sourcePortId) {
       const { sourceNodeId, sourcePortId } = clickConnectionState
       if (sourcePortAllowsConnectedNodeMenu(sourceNodeId, sourcePortId)) {
-        getCanvas().openConnectionCreateMenu(buildConnectionCreateRequest(sourceNodeId, sourcePortId, event))
+        getCanvas().openConnectionCreateMenu(buildConnectionCreateRequest(sourceNodeId, sourcePortId, event, clickConnectionState.sourceAnchor))
       }
       clearConnectionGesture()
       return
     }
-    if (shouldClickPane) {
+    // Layout changes can briefly leave the pointer-down hit test one frame
+    // behind. Re-check at release so a node click never becomes a pane click.
+    if (shouldClickPane && !isOverInteractiveCanvasContent(event)) {
       getCanvas().onPaneClick()
     }
   }
@@ -360,25 +400,33 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   const onNativeNodeDown = (event: PointerEvent) => {
     if (event.button !== 0) return
     if (spaceDown) return
-    if (panState.dragging) return
     const c = getCanvas()
     const rect = pixiCanvasEl.getBoundingClientRect()
     const canvasX = event.clientX - rect.left
     const canvasY = event.clientY - rect.top
 
-    const portHit = findPortAtPosition(canvasX, canvasY, graphNodesRef.current, c.viewport)
+    const portHit = findConnectionAnchorAtPosition(canvasX, canvasY, graphNodesRef.current, c.viewport)
     if (portHit) {
       event.preventDefault()
       marqueeState.claimed = true
+      const additive = event.shiftKey || event.ctrlKey || event.metaKey
+      c.onNodeClick(portHit.nodeId, additive)
       connectionDragState.active = true
       connectionDragState.moved = false
+      connectionDragState.previewStarted = false
       connectionDragState.sourceNodeId = portHit.nodeId
       connectionDragState.sourcePortId = portHit.portId
+      connectionDragState.sourceAnchor = portHit.anchor
       connectionDragState.startX = event.clientX
       connectionDragState.startY = event.clientY
+      if (portHit.kind === 'boundary') {
+        return
+      }
       if (!clickConnectionState.sourceNodeId) {
         clickConnectionState.sourceNodeId = portHit.nodeId
         clickConnectionState.sourcePortId = portHit.portId
+        clickConnectionState.sourceAnchor = portHit.anchor
+        connectionDragState.previewStarted = true
         c.startConnection(portHit.nodeId, portHit.portId)
       } else if (
         clickConnectionState.sourceNodeId === portHit.nodeId
@@ -390,6 +438,7 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
           portHit.nodeId,
           clickConnectionState.sourcePortId!,
           portHit.portId,
+          { sourceAnchor: clickConnectionState.sourceAnchor, targetAnchor: portHit.anchor },
         )
         clearConnectionGesture()
       }
@@ -398,6 +447,21 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
 
     const node = findNodeAtPosition(canvasX, canvasY, graphNodesRef.current, '', c.viewport)
     if (!node) return
+
+    if (panState.dragging) {
+      const pointerId = panState.pointerId
+      panState.dragging = false
+      panState.pointerId = null
+      panState.moved = false
+      hitArea.cursor = spaceDown ? 'grab' : 'default'
+      try {
+        if (pointerId !== null && pixiCanvasEl.hasPointerCapture(pointerId)) {
+          pixiCanvasEl.releasePointerCapture(pointerId)
+        }
+      } catch {
+        // Pointer capture is best-effort across browser implementations.
+      }
+    }
     marqueeState.claimed = true
 
     if (c.connectorMode) {
@@ -412,24 +476,38 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
         clickConnectionState.sourcePortId = sourcePortId
         c.startConnection(node.id, sourcePortId)
       } else if (clickConnectionState.sourceNodeId === node.id) {
-        clickConnectionState.sourceNodeId = null
-        clickConnectionState.sourcePortId = null
+        clearClickConnection()
       } else {
         const targetPortId = getPreferredConnectionPortId(node, 'target')
         if (!targetPortId) return
-        c.onConnect(
-          clickConnectionState.sourceNodeId,
-          node.id,
-          clickConnectionState.sourcePortId ?? 'out',
-          targetPortId,
-        )
-        clickConnectionState.sourceNodeId = null
-        clickConnectionState.sourcePortId = null
+        if (clickConnectionState.sourceAnchor) {
+          c.onConnect(
+            clickConnectionState.sourceNodeId,
+            node.id,
+            clickConnectionState.sourcePortId ?? 'out',
+            targetPortId,
+            { sourceAnchor: clickConnectionState.sourceAnchor },
+          )
+        } else {
+          c.onConnect(
+            clickConnectionState.sourceNodeId,
+            node.id,
+            clickConnectionState.sourcePortId ?? 'out',
+            targetPortId,
+          )
+        }
+        clearClickConnection()
       }
       return
     }
 
+    if (node.type === 'stage') {
+      c.onNodeClick(node.id, event.shiftKey || event.ctrlKey || event.metaKey)
+      return
+    }
+
     nodeDragState.dragging = true
+    nodeDragState.detachedFromStage = false
     nodeDragState.startX = event.clientX
     nodeDragState.startY = event.clientY
     nodeDragState.nodeId = node.id
@@ -444,6 +522,10 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
       const dy = event.clientY - connectionDragState.startY
       if (Math.hypot(dx, dy) >= CONNECTION_DRAG_THRESHOLD) {
         connectionDragState.moved = true
+        if (!connectionDragState.previewStarted && connectionDragState.sourceNodeId && connectionDragState.sourcePortId) {
+          connectionDragState.previewStarted = true
+          getCanvas().startConnection(connectionDragState.sourceNodeId, connectionDragState.sourcePortId)
+        }
       }
     }
 
@@ -457,6 +539,10 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     const dx = (curCanvasX - startCanvasX) / c.viewport.zoom
     const dy = (curCanvasY - startCanvasY) / c.viewport.zoom
     if (Math.abs(dx) > 2 / c.viewport.zoom || Math.abs(dy) > 2 / c.viewport.zoom) {
+      if (!nodeDragState.detachedFromStage && nodeDragState.nodeId) {
+        c.beginNodeDrag?.(nodeDragState.nodeId)
+        nodeDragState.detachedFromStage = true
+      }
       c.moveSelectedNodes(dx, dy)
       nodeDragState.startX = event.clientX
       nodeDragState.startY = event.clientY
@@ -465,7 +551,11 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
 
   const onNativeNodeUp = (): void => {
     if (!nodeDragState.dragging) return
+    if (nodeDragState.detachedFromStage && nodeDragState.nodeId) {
+      getCanvas().completeNodeDrag?.(nodeDragState.nodeId)
+    }
     nodeDragState.dragging = false
+    nodeDragState.detachedFromStage = false
     nodeDragState.nodeId = null
   }
 
@@ -484,15 +574,18 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
     }
 
     const point = eventToCanvasPoint(event)
-    const targetPort = findPortAtPosition(point.x, point.y, graphNodesRef.current, getCanvas().viewport, sourceNodeId)
+    const targetPort = findConnectionAnchorAtPosition(point.x, point.y, graphNodesRef.current, getCanvas().viewport, sourceNodeId)
     if (targetPort) {
-      getCanvas().onConnect(sourceNodeId, targetPort.nodeId, sourcePortId, targetPort.portId)
+      getCanvas().onConnect(sourceNodeId, targetPort.nodeId, sourcePortId, targetPort.portId, {
+        sourceAnchor: connectionDragState.sourceAnchor,
+        targetAnchor: targetPort.anchor,
+      })
       clearConnectionGesture()
       return
     }
 
     if (sourcePortAllowsConnectedNodeMenu(sourceNodeId, sourcePortId)) {
-      getCanvas().openConnectionCreateMenu(buildConnectionCreateRequest(sourceNodeId, sourcePortId, event))
+      getCanvas().openConnectionCreateMenu(buildConnectionCreateRequest(sourceNodeId, sourcePortId, event, connectionDragState.sourceAnchor))
     }
     clearConnectionGesture()
   }
@@ -508,6 +601,7 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   host.addEventListener('pointerup', onNativePanUp)
   host.addEventListener('pointercancel', onNativePanUp)
   host.addEventListener('contextmenu', onNativeContextMenu)
+  host.addEventListener('pointermove', updateNodeHoverTitle)
   host.addEventListener('pointerdown', onNativeMarqueeDown)
   host.addEventListener('pointermove', onNativeMarqueeMove)
   host.addEventListener('pointerup', onNativeMarqueeUp)
@@ -532,6 +626,9 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
   host.addEventListener('pointermove', onNativeNodeMove)
   host.addEventListener('pointerup', onNativeNodeUp)
   host.addEventListener('pointercancel', onNativeNodeUp)
+  const onHostConnectionUp = (event: PointerEvent) => onNativeConnectionUp(event)
+  host.addEventListener('pointerup', onHostConnectionUp)
+  host.addEventListener('pointercancel', onHostConnectionUp)
   const onHostNodeMouseMove = (event: MouseEvent) => onNativeNodeMove(event as unknown as PointerEvent)
   const onHostNodeMouseUp = (event: MouseEvent) => {
     onNativeConnectionUp(event as unknown as PointerEvent)
@@ -577,6 +674,7 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
       host.removeEventListener('pointerup', onNativePanUp)
       host.removeEventListener('pointercancel', onNativePanUp)
       host.removeEventListener('contextmenu', onNativeContextMenu)
+      host.removeEventListener('pointermove', updateNodeHoverTitle)
       host.removeEventListener('mousemove', onHostMouseMove)
       host.removeEventListener('mouseup', onHostMouseUp)
       host.removeEventListener('wheel', onNativeWheel)
@@ -584,6 +682,8 @@ export function registerCanvasNativeHandlers(args: RegisterCanvasNativeHandlersA
       host.removeEventListener('pointermove', onNativeNodeMove)
       host.removeEventListener('pointerup', onNativeNodeUp)
       host.removeEventListener('pointercancel', onNativeNodeUp)
+      host.removeEventListener('pointerup', onHostConnectionUp)
+      host.removeEventListener('pointercancel', onHostConnectionUp)
       host.removeEventListener('mousemove', onHostNodeMouseMove)
       host.removeEventListener('mouseup', onHostNodeMouseUp)
       window.removeEventListener('pointermove', onWindowConnectionMove, true)
@@ -624,7 +724,8 @@ export function findNodeAtPosition(
   const worldX = (screenX - viewport.x) / viewport.zoom
   const worldY = (screenY - viewport.y) / viewport.zoom
 
-  for (const node of nodes) {
+  const hitOrder = [...nodes.filter((node) => node.type !== 'stage'), ...nodes.filter((node) => node.type === 'stage')]
+  for (const node of hitOrder) {
     if (node.id === excludeNodeId) continue
     if (
       worldX >= node.x &&
@@ -655,11 +756,10 @@ export function findEdgeAtPosition(
   const nodesById = new Map(nodes.map((node) => [node.id, node]))
 
   for (const edge of edges) {
-    const points = getEdgeControlPoints(edge, nodesById)
+    const points = getEdgeRoutePoints(edge, nodesById)
     if (!points) continue
-    let previous = getBezierPoint(points, 0)
-    for (let step = 1; step <= 28; step += 1) {
-      const current = getBezierPoint(points, step / 28)
+    let previous = points[0]
+    for (const current of points.slice(1)) {
       if (distanceToSegment(worldPoint, previous, current) <= threshold) {
         return edge.id
       }
@@ -668,23 +768,6 @@ export function findEdgeAtPosition(
   }
 
   return null
-}
-
-function getBezierPoint(
-  points: NonNullable<ReturnType<typeof getEdgeControlPoints>>,
-  t: number,
-): { x: number; y: number } {
-  const u = 1 - t
-  return {
-    x: u * u * u * points.from.x
-      + 3 * u * u * t * points.cp1.x
-      + 3 * u * t * t * points.cp2.x
-      + t * t * t * points.to.x,
-    y: u * u * u * points.from.y
-      + 3 * u * u * t * points.cp1.y
-      + 3 * u * t * t * points.cp2.y
-      + t * t * t * points.to.y,
-  }
 }
 
 function distanceToSegment(
@@ -705,30 +788,69 @@ function distanceToSegment(
   return Math.hypot(point.x - projection.x, point.y - projection.y)
 }
 
-function findPortAtPosition(
+function findConnectionAnchorAtPosition(
   screenX: number,
   screenY: number,
   nodes: GraphNode[],
   viewport: { x: number; y: number; zoom: number },
   excludeNodeId = '',
-): { nodeId: string; portId: string } | null {
+): { nodeId: string; portId: string; anchor: EdgeEndpointAnchor; kind: 'port' | 'boundary' } | null {
   const worldX = (screenX - viewport.x) / viewport.zoom
   const worldY = (screenY - viewport.y) / viewport.zoom
   const HIT_RADIUS = 14
+  const boundaryHits: Array<{
+    hit: { nodeId: string; portId: string; anchor: EdgeEndpointAnchor; kind: 'boundary' }
+    containsPoint: boolean
+    distance: number
+    zIndex: number
+  }> = []
 
   // Iterate in reverse so the topmost rendered node wins on overlap.
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]
     if (node.id === excludeNodeId) continue
+    if (node.type === 'stage') continue
     for (const port of node.ports) {
       const pos = getPortPosition(node, port.id)
       const dx = pos.x - worldX
       const dy = pos.y - worldY
       if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) {
-        return { nodeId: node.id, portId: port.id }
+        return { nodeId: node.id, portId: port.id, anchor: { side: port.side, offset: 0.5 }, kind: 'port' }
       }
+    }
+    const boundary = getBoundaryAnchor(node, { x: worldX, y: worldY }, HIT_RADIUS)
+    if (boundary) {
+      boundaryHits.push({
+        hit: { nodeId: node.id, portId: boundary.id, anchor: boundary.anchor, kind: 'boundary' },
+        containsPoint: worldX >= node.x && worldX <= node.x + node.width && worldY >= node.y && worldY <= node.y + node.height,
+        distance: getBoundaryDistance(node, { x: worldX, y: worldY }, boundary.side),
+        zIndex: i,
+      })
     }
   }
 
-  return null
+  return boundaryHits
+    .sort((a, b) => {
+      if (a.containsPoint !== b.containsPoint) return a.containsPoint ? -1 : 1
+      if (a.containsPoint && b.containsPoint) return b.zIndex - a.zIndex
+      if (a.distance !== b.distance) return a.distance - b.distance
+      return b.zIndex - a.zIndex
+    })[0]?.hit ?? null
+}
+
+function getBoundaryDistance(
+  node: GraphNode,
+  point: { x: number; y: number },
+  side: EdgeEndpointAnchor['side'],
+): number {
+  switch (side) {
+    case 'top':
+      return Math.abs(point.y - node.y)
+    case 'right':
+      return Math.abs(point.x - (node.x + node.width))
+    case 'bottom':
+      return Math.abs(point.y - (node.y + node.height))
+    case 'left':
+      return Math.abs(point.x - node.x)
+  }
 }

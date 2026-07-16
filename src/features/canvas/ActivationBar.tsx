@@ -1,11 +1,15 @@
 import type { BottleneckMetrics } from './diagnostics/bottleneckMetrics'
 import { type ActivationState } from './activation/processActivation'
+import type { ProcessFinding, ProcessIntelligenceReport } from './diagnostics/processIntelligence'
+import { getProcessIntelligenceProfile } from './processIntelligenceProfiles'
 
 interface ActivationBarProps {
   activation: ActivationState
   eligible: boolean
   reasons: string[]
   bottlenecks?: BottleneckMetrics
+  processIntelligence?: ProcessIntelligenceReport | null
+  onSelectProcessFinding?: (finding: ProcessFinding) => void
   onActivate: () => void
 }
 
@@ -15,7 +19,7 @@ interface ActivationBarProps {
  * map" to "this map is the agreed current process". We keep the bar
  * minimal so it doesn't crowd the existing palette and focus bar.
  */
-export function ActivationBar({ activation, eligible, reasons, bottlenecks, onActivate }: ActivationBarProps) {
+export function ActivationBar({ activation, eligible, reasons, bottlenecks, processIntelligence, onSelectProcessFinding, onActivate }: ActivationBarProps) {
   const statusClass = `activation-bar activation-bar-${activation.status}`
 
   return (
@@ -45,6 +49,7 @@ export function ActivationBar({ activation, eligible, reasons, bottlenecks, onAc
           <span>{bottlenecks.open} open</span>
         </div>
       )}
+      {processIntelligence && <ProcessIntelligenceSummary report={processIntelligence} onSelectFinding={onSelectProcessFinding} />}
       <button
         type="button"
         className="activation-bar-activate"
@@ -59,6 +64,52 @@ export function ActivationBar({ activation, eligible, reasons, bottlenecks, onAc
       </button>
     </section>
   )
+}
+
+function ProcessIntelligenceSummary({
+  report,
+  onSelectFinding,
+}: {
+  report: ProcessIntelligenceReport
+  onSelectFinding?: (finding: ProcessFinding) => void
+}) {
+  const metrics = report.metrics
+  return (
+    <section className="process-intelligence-summary" aria-label="Process intelligence">
+      <div className="process-intelligence-heading">
+        <div>
+          <span>Process intelligence</span>
+          <small>{getProcessIntelligenceProfile(report.profile).label}</small>
+        </div>
+        <strong>{metrics ? metrics.verdict.replace('-', ' ') : 'Needs data'}</strong>
+      </div>
+      {metrics ? (
+        <div className="process-intelligence-metrics">
+          <span>P50 {formatMinutes(metrics.totalMinutesP50)}</span>
+          <span>P90 {formatMinutes(metrics.totalMinutesP90)}</span>
+          <span>{Math.round(metrics.processCycleEfficiency * 100)}% value-add</span>
+          {metrics.throughputPerHour != null && <span>{metrics.throughputPerHour.toFixed(1)} items/hr</span>}
+        </div>
+      ) : (
+        <p className="process-intelligence-gap">{report.dataGaps.length} timing data gaps need measurement.</p>
+      )}
+      {report.findings.length > 0 && (
+        <ul className="process-intelligence-findings">
+          {report.findings.slice(0, 3).map((finding) => (
+            <li key={`${finding.rule}-${finding.nodeIds.join('-')}`}>
+              <button type="button" onClick={() => onSelectFinding?.(finding)} aria-label={finding.title}>
+                <span>{finding.rule}</span> {finding.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function formatMinutes(value: number): string {
+  return Number.isInteger(value) ? `${value} min` : `${value.toFixed(1)} min`
 }
 
 function activationLabel(status: ActivationState['status']): string {

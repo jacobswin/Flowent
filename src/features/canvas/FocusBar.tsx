@@ -16,7 +16,10 @@ export function FocusBar({ focus, roles, onChange, defaultCollapsed = true }: Fo
       storageKey="flowent:top-dock:focus-view:collapsed"
       title="Focus view"
       width={330}
-      collapsedWidth={190}
+      collapsedWidth={206}
+      collapsedMinWidth={120}
+      collapsedWeight={1.1}
+      compactTitle="Focus"
       defaultCollapsed={defaultCollapsed}
     >
       <div className="focus-view-controls" role="group" aria-label="Readability focus tools">

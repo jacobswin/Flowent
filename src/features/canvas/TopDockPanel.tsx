@@ -12,6 +12,9 @@ interface TopDockPanelProps {
   badge?: ReactNode
   width?: number
   collapsedWidth?: number
+  collapsedMinWidth?: number
+  collapsedWeight?: number
+  compactTitle?: string
   defaultCollapsed?: boolean
   children: ReactNode
 }
@@ -46,6 +49,9 @@ export function TopDockPanel({
   badge,
   width = 260,
   collapsedWidth = 196,
+  collapsedMinWidth = 120,
+  collapsedWeight = 1,
+  compactTitle,
   defaultCollapsed = true,
   children,
 }: TopDockPanelProps) {
@@ -60,14 +66,20 @@ export function TopDockPanel({
     <PanelTag
       className={`top-dock-panel ${className}${collapsed ? ' top-dock-panel-collapsed' : ''}`}
       aria-label={ariaLabel}
+      data-compact-title={compactTitle}
       style={{
         '--top-dock-width': `${width}px`,
         '--top-dock-collapsed-width': `${collapsedWidth}px`,
+        '--top-dock-collapsed-min-width': `${collapsedMinWidth}px`,
+        '--top-dock-collapsed-weight': String(collapsedWeight),
       } as CSSProperties}
     >
       <div className="top-dock-panel-header">
         <div className="top-dock-panel-title-block">
-          <span className="top-dock-panel-title">{title}</span>
+          <span className="top-dock-panel-title" title={title}>
+            <span className="top-dock-panel-title-full">{title}</span>
+            {compactTitle && <span className="top-dock-panel-title-compact">{compactTitle}</span>}
+          </span>
           {!collapsed && subtitle && <span className="top-dock-panel-subtitle">{subtitle}</span>}
         </div>
         <div className="top-dock-panel-actions">

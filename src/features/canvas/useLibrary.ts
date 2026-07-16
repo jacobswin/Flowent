@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SavedFolder, SavedLibrary, SavedMap } from './library'
 import { serializeGraphDocument } from './engine/graphSerialization'
 import { createTemplateDocument, type ProcessMapTemplateId } from './templates/processMapTemplates'
+import type { SharedElementKind, SharedRole } from './sharedElements'
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -25,7 +26,18 @@ interface UseLibraryResult {
   moveFolder: (id: string, parentId: string | null) => Promise<void>
   saveMapDocument: (mapId: string, document: SavedMap['document']) => Promise<void>
   saveMapActivation: (mapId: string, activation: NonNullable<SavedMap['activation']>) => Promise<void>
+  createSharedElement: (kind: SharedElementKind, draft: Record<string, unknown>) => Promise<Record<string, unknown>>
+  updateSharedElement: (kind: SharedElementKind, id: string, patch: Record<string, unknown>) => Promise<void>
+  deleteSharedElement: (kind: SharedElementKind, id: string, confirmed?: boolean) => Promise<void>
+  ensureSharedRoles: (roleNames: string[]) => Promise<Record<string, string>>
   reload: () => Promise<void>
+}
+
+const SHARED_ELEMENT_COLLECTIONS: Record<SharedElementKind, 'roles' | 'workProducts' | 'activities' | 'processes'> = {
+  role: 'roles',
+  workProduct: 'workProducts',
+  activity: 'activities',
+  process: 'processes',
 }
 
 export function useLibrary(): UseLibraryResult {
@@ -44,19 +56,26 @@ export function useLibrary(): UseLibraryResult {
   const [error, setError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const inflight = useRef(0)
+  const hasLoadedOnce = useRef(false)
 
   const reload = useCallback(async () => {
-    setLoading(true)
+    // A library refresh can happen while an Activity editor is open (for
+    // example after a free-form RASIC entry creates a shared Role). Only the
+    // very first fetch should block the canvas. Subsequent reloads update the
+    // side library in place so they cannot unmount the active map/editor.
+    const isInitialLoad = !hasLoadedOnce.current
+    if (isInitialLoad) setLoading(true)
     try {
       const res = await fetch('/api/library')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const body = (await res.json()) as { data: SavedLibrary }
       setLibrary(body.data)
       setError(null)
+      hasLoadedOnce.current = true
     } catch (err) {
       setError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (isInitialLoad) setLoading(false)
     }
   }, [])
 
@@ -283,6 +302,72 @@ export function useLibrary(): UseLibraryResult {
     [run],
   )
 
+  const createSharedElement = useCallback(async (kind: SharedElementKind, draft: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const created = await run('createSharedElement', async () => {
+      const res = await fetch(`/api/library/elements/${SHARED_ELEMENT_COLLECTIONS[kind]}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(draft),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const body = (await res.json()) as { data: Record<string, unknown> }
+      return body.data
+    })
+    await reload()
+    return created
+  }, [reload, run])
+
+  const updateSharedElement = useCallback(async (kind: SharedElementKind, id: string, patch: Record<string, unknown>) => {
+    await run('updateSharedElement', async () => {
+      const res = await fetch(`/api/library/elements/${SHARED_ELEMENT_COLLECTIONS[kind]}/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    })
+    await reload()
+  }, [reload, run])
+
+  const deleteSharedElement = useCallback(async (kind: SharedElementKind, id: string, confirmed = false) => {
+    await run('deleteSharedElement', async () => {
+      const suffix = confirmed ? '?confirm=true' : ''
+      const res = await fetch(`/api/library/elements/${SHARED_ELEMENT_COLLECTIONS[kind]}/${id}${suffix}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    })
+    await reload()
+  }, [reload, run])
+
+  const ensureSharedRoles = useCallback(async (roleNames: string[]): Promise<Record<string, string>> => {
+    const names = Array.from(new Set(roleNames.map((name) => name.trim()).filter(Boolean)))
+    if (names.length === 0) return {}
+
+    return run('ensureSharedRoles', async () => {
+      const rolesByName = new Map(
+        Object.values(library.elementLibrary?.roles ?? {}).map((role) => [role.name.trim().toLocaleLowerCase(), role]),
+      )
+      const resolved: Record<string, string> = {}
+      for (const name of names) {
+        const key = name.toLocaleLowerCase()
+        let role = rolesByName.get(key)
+        if (!role) {
+          const res = await fetch('/api/library/elements/roles', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name }),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const body = (await res.json()) as { data: SharedRole }
+          role = body.data
+          rolesByName.set(role.name.trim().toLocaleLowerCase(), role)
+        }
+        resolved[key] = role.id
+      }
+      await reload()
+      return resolved
+    })
+  }, [library.elementLibrary?.roles, reload, run])
+
   return {
     library,
     loading,
@@ -299,6 +384,10 @@ export function useLibrary(): UseLibraryResult {
     moveFolder,
     saveMapDocument,
     saveMapActivation,
+    createSharedElement,
+    updateSharedElement,
+    deleteSharedElement,
+    ensureSharedRoles,
     reload,
   }
 }

@@ -86,6 +86,9 @@ export function toGraphNode(node: ProcessNode): GraphNode {
         entryCondition: node.data.entryCondition,
         exitCondition: node.data.exitCondition,
         owner: node.data.owner,
+        ownerRoleId: node.data.ownerRoleId,
+        memberNodeIds: node.data.memberNodeIds ?? [],
+        stagePadding: node.data.stagePadding,
         assetSummary: node.data.assetSummary,
         roleTags: [],
       }

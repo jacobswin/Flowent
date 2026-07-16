@@ -41,7 +41,7 @@ describe('processAssets', () => {
     })
   })
 
-  it('converts legacy role tags to responsible RASIC entries', () => {
+  it('converts legacy role tags to one responsible and supporting RASIC entries', () => {
     const activity = {
       ...createGraphNode('activity', 'activity-1', { x: 0, y: 0 }),
       roleTags: ['PM', 'Engineer'],
@@ -49,7 +49,7 @@ describe('processAssets', () => {
 
     expect(getActivityResponsibilities(activity)).toEqual([
       { id: 'responsibility-activity-1-pm-responsible', roleName: 'PM', kind: 'responsible' },
-      { id: 'responsibility-activity-1-engineer-responsible', roleName: 'Engineer', kind: 'responsible' },
+      { id: 'responsibility-activity-1-engineer-supporting', roleName: 'Engineer', kind: 'supporting' },
     ])
   })
 
@@ -66,6 +66,43 @@ describe('processAssets', () => {
       { id: 'r1', roleName: 'QA', kind: 'accountable' },
     ])
     expect(next.nodes.get('activity-1')?.roleTags).toEqual(['QA'])
+  })
+
+  it('keeps only one responsible person and converts extra responsible entries to supporting', () => {
+    let doc = addNode(createEmptyDocument('map-1'), createGraphNode('activity', 'activity-1', { x: 0, y: 0 }))
+
+    doc = addResponsibility(doc, 'activity-1', {
+      id: 'r1',
+      roleName: 'Alice',
+      kind: 'responsible',
+    })
+    doc = addResponsibility(doc, 'activity-1', {
+      id: 'r2',
+      roleName: 'Bob',
+      kind: 'responsible',
+    })
+
+    expect(doc.nodes.get('activity-1')?.responsibilities).toEqual([
+      { id: 'r1', roleName: 'Alice', kind: 'responsible' },
+      { id: 'r2', roleName: 'Bob', kind: 'supporting' },
+    ])
+    expect(doc.nodes.get('activity-1')?.roleTags).toEqual(['Alice', 'Bob'])
+  })
+
+  it('allows multiple accountable, supporting, consulted, and informed responsibilities', () => {
+    let doc = addNode(createEmptyDocument('map-1'), createGraphNode('activity', 'activity-1', { x: 0, y: 0 }))
+
+    doc = addResponsibility(doc, 'activity-1', { id: 'a1', roleName: 'PM', kind: 'accountable' })
+    doc = addResponsibility(doc, 'activity-1', { id: 'a2', roleName: 'QA', kind: 'accountable' })
+    doc = addResponsibility(doc, 'activity-1', { id: 'c1', roleName: 'Legal', kind: 'consulted' })
+    doc = addResponsibility(doc, 'activity-1', { id: 'i1', roleName: 'Release', kind: 'informed' })
+
+    expect(doc.nodes.get('activity-1')?.responsibilities).toEqual([
+      { id: 'a1', roleName: 'PM', kind: 'accountable' },
+      { id: 'a2', roleName: 'QA', kind: 'accountable' },
+      { id: 'c1', roleName: 'Legal', kind: 'consulted' },
+      { id: 'i1', roleName: 'Release', kind: 'informed' },
+    ])
   })
 
   it('creates, renames, links, unlinks, and deletes work products', () => {

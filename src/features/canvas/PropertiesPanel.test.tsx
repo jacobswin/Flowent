@@ -162,6 +162,40 @@ describe('PropertiesPanel — semantic editors', () => {
     expect(onUpdate).toHaveBeenCalledWith('a1', { expectations: 'Ready when scope and owner are clear' })
   })
 
+  it('edits activity process-stage P50 data through the normal node update path', () => {
+    const onUpdate = vi.fn()
+    render(
+      <PropertiesPanel
+        node={{
+          id: 'a1',
+          type: 'activity',
+          position: { x: 100, y: 100 },
+          data: {
+            title: 'Review brief', summary: '', roleIds: [], kind: 'activity',
+            processStage: {
+              kind: 'wait', durationMinutesP50: 45, durationMinutesP90: 120, classificationSource: 'explicit',
+            },
+          },
+        }}
+        edge={null}
+        onUpdateNode={onUpdate}
+        onUpdateEdge={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(screen.getByLabelText('Stage classification')).toHaveValue('wait')
+    const p50 = screen.getByLabelText('P50 duration (minutes)') as HTMLInputElement
+    fireEvent.change(p50, { target: { value: '60' } })
+    fireEvent.blur(p50)
+
+    expect(onUpdate).toHaveBeenCalledWith('a1', {
+      processStage: {
+        kind: 'wait', durationMinutesP50: 60, durationMinutesP90: 120, classificationSource: 'explicit',
+      },
+    })
+  })
+
   it('commits the current activity title value on blur even before draft state catches up', () => {
     const onUpdate = vi.fn()
     render(<PropertiesPanel node={makeActivity()} edge={null} onUpdateNode={onUpdate} onUpdateEdge={() => {}} onClose={() => {}} />)
@@ -173,40 +207,62 @@ describe('PropertiesPanel — semantic editors', () => {
     expect(onUpdate).toHaveBeenCalledWith('a1', { title: 'Customer onboarding' })
   })
 
-  it('adds the current role input value on Enter even before draft state catches up', () => {
-    const onUpdate = vi.fn()
-    render(<PropertiesPanel node={makeActivity()} edge={null} onUpdateNode={onUpdate} onUpdateEdge={() => {}} onClose={() => {}} />)
-
-    const role = screen.getByLabelText('Add role') as HTMLInputElement
-    role.value = 'Engineer'
-    fireEvent.keyDown(role, { key: 'Enter' })
-
-    expect(onUpdate).toHaveBeenCalledWith('a1', { roleIds: ['Engineer'] })
-  })
-
-  it('adds a RASIC responsibility from the activity editor', () => {
-    const onAddResponsibility = vi.fn()
+  it('removes the separate role tag editor from the activity panel', () => {
     render(
       <PropertiesPanel
         node={makeActivity()}
         edge={null}
-        processAssets={makeAssets()}
-        assetActions={{ addResponsibility: onAddResponsibility }}
         onUpdateNode={() => {}}
         onUpdateEdge={() => {}}
         onClose={() => {}}
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Responsibility kind'), { target: { value: 'accountable' } })
-    const role = screen.getByLabelText('Responsibility role') as HTMLInputElement
-    role.value = 'QA'
-    fireEvent.click(screen.getByRole('button', { name: 'Add responsibility' }))
+    expect(screen.queryByLabelText('Add role')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Role tags')).not.toBeInTheDocument()
+  })
 
-    expect(onAddResponsibility).toHaveBeenCalledWith('a1', {
-      roleName: 'QA',
-      kind: 'accountable',
+  it('edits RASIC through five fixed fields and keeps Responsible to one person', () => {
+    const onUpdate = vi.fn()
+    render(
+      <PropertiesPanel
+        node={makeActivity()}
+        edge={null}
+        onUpdateNode={onUpdate}
+        onUpdateEdge={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(screen.queryByLabelText('Responsibility kind')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add responsibility' })).not.toBeInTheDocument()
+
+    const responsible = screen.getByLabelText('Responsible') as HTMLInputElement
+    responsible.value = 'Alice, Bob'
+    fireEvent.blur(responsible)
+
+    expect(onUpdate).toHaveBeenLastCalledWith('a1', {
+      responsibilities: [
+        expect.objectContaining({ roleName: 'Alice', kind: 'responsible' }),
+      ],
     })
+
+    const supporting = screen.getByLabelText('Supporting') as HTMLTextAreaElement
+    supporting.value = 'QA，Ops; PM\nRelease'
+    fireEvent.blur(supporting)
+
+    expect(onUpdate).toHaveBeenLastCalledWith('a1', {
+      responsibilities: [
+        expect.objectContaining({ roleName: 'QA', kind: 'supporting' }),
+        expect.objectContaining({ roleName: 'Ops', kind: 'supporting' }),
+        expect.objectContaining({ roleName: 'PM', kind: 'supporting' }),
+        expect.objectContaining({ roleName: 'Release', kind: 'supporting' }),
+      ],
+    })
+
+    expect(screen.getByLabelText('Accountable')).toBeInTheDocument()
+    expect(screen.getByLabelText('Consulted')).toBeInTheDocument()
+    expect(screen.getByLabelText('Informed')).toBeInTheDocument()
   })
 
   it('creates an input work product from the activity editor', () => {

@@ -34,6 +34,22 @@ describe('getProcessMapDiagnostics', () => {
     }))
   })
 
+  it('flags legacy direct Stage connections for manual repair', () => {
+    let doc = createEmptyDocument('doc')
+    doc = addNode(doc, createGraphNode('stage', 'stage-1', { x: 0, y: 0 }))
+    doc = addNode(doc, createGraphNode('activity', 'activity-1', { x: 360, y: 0 }))
+    doc = addEdge(doc, {
+      ...createHandoffEdge('legacy-edge', 'stage-1', 'out', 'activity-1', 'in'),
+      legacyStageConnection: true,
+    })
+
+    expect(getProcessMapDiagnostics(doc)).toContainEqual(expect.objectContaining({
+      targetType: 'edge',
+      targetId: 'legacy-edge',
+      title: 'Legacy connection is attached to a Stage',
+    }))
+  })
+
   it('does not flag a complete activity and handoff', () => {
     let doc = createEmptyDocument('doc')
     const a = {

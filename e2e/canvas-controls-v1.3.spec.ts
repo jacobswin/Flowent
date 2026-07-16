@@ -26,6 +26,85 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector(pixiCanvas, { timeout: 30000 })
 })
 
+test('main toolbar sits in the same top row as dock panels', async ({ page }) => {
+  const elementsBox = await page.getByLabel('Process element library').boundingBox()
+  const layoutBox = await page.getByRole('button', { name: /flow layout/i }).boundingBox()
+
+  if (!elementsBox || !layoutBox) throw new Error('missing top control boxes')
+  expect(Math.abs(elementsBox.y - layoutBox.y)).toBeLessThanOrEqual(8)
+  await expect(page.locator('.canvas-control-rail .canvas-title')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Expand Alignment' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand Assets' })).toBeVisible()
+})
+
+test('compact top controls remain visible in one proportional row without hidden scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1130, height: 720 })
+  await page.getByRole('button', { name: 'Collapse library' }).click()
+
+  const controls = {
+    elements: page.getByRole('region', { name: 'Process element library' }),
+    alignment: page.getByRole('complementary', { name: 'Alignment checklist' }),
+    assets: page.getByRole('complementary', { name: 'Process assets' }),
+    focus: page.getByRole('region', { name: 'Focus view' }),
+  }
+  const boxes = Object.fromEntries(await Promise.all(
+    Object.entries(controls).map(async ([name, control]) => {
+      const box = await control.boundingBox()
+      if (!box) throw new Error(`missing ${name} top control`)
+      return [name, box] as const
+    }),
+  ))
+
+  for (const box of Object.values(boxes)) {
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(1130)
+  }
+  expect(boxes.alignment.width).toBeGreaterThan(boxes.assets.width)
+  expect(boxes.focus.width).toBeGreaterThan(boxes.elements.width)
+
+  for (const buttonName of ['Flow layout', 'Swimlane layout', 'Zoom level 100%']) {
+    const box = await page.getByRole('button', { name: buttonName }).boundingBox()
+    if (!box) throw new Error(`missing ${buttonName}`)
+    expect(box.x + box.width).toBeLessThanOrEqual(1130)
+  }
+
+  const dockStyle = await page.locator('.canvas-top-dock').evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      background: style.backgroundColor,
+      overflowX: style.overflowX,
+    }
+  })
+  expect(dockStyle.background).toBe('rgba(0, 0, 0, 0)')
+  expect(dockStyle.overflowX).not.toBe('auto')
+
+  await expandDockPanel(page, 'Focus view')
+  await page.getByRole('button', { name: 'Handoff paths' }).click()
+  await expect(page.getByRole('button', { name: 'Handoff paths' })).toHaveClass(/active/)
+
+  const chromeStyle = await page.evaluate(() => {
+    const readStyle = (selector: string) => {
+      const element = document.querySelector(selector)
+      if (!element) throw new Error(`missing ${selector}`)
+      const style = getComputedStyle(element)
+      return {
+        backdrop: style.backdropFilter || style.getPropertyValue('-webkit-backdrop-filter'),
+        boxShadow: style.boxShadow,
+      }
+    }
+    return {
+      library: readStyle('.library-rail'),
+      panel: readStyle('.top-dock-panel'),
+      toolbar: readStyle('.canvas-toolbar'),
+    }
+  })
+  expect(chromeStyle.library.boxShadow).toBe('none')
+  expect(chromeStyle.panel.backdrop).toBe('none')
+  expect(chromeStyle.panel.boxShadow).toBe('none')
+  expect(chromeStyle.toolbar.backdrop).toBe('none')
+  expect(chromeStyle.toolbar.boxShadow).toBe('none')
+})
+
 test('top dock panels expand and collapse from fixed headers', async ({ page }) => {
   await expect(page.locator('.keyboard-hint')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toHaveCount(0)
@@ -35,15 +114,15 @@ test('top dock panels expand and collapse from fixed headers', async ({ page }) 
   await page.getByRole('button', { name: 'Collapse Elements' }).click()
   await expect(page.locator('button[aria-label^="Activity:"]')).toHaveCount(0)
 
-  await expandDockPanel(page, 'Alignment checklist')
+  await expandDockPanel(page, 'Alignment')
   await expect(page.getByText('No alignment gaps found in the current map.')).toBeVisible()
-  await page.getByRole('button', { name: 'Collapse Alignment checklist' }).click()
+  await page.getByRole('button', { name: 'Collapse Alignment' }).click()
   await expect(page.getByText('No alignment gaps found in the current map.')).toHaveCount(0)
 
-  await expandDockPanel(page, 'Process assets')
-  await expect(page.getByLabel('Stages completeness')).toBeVisible()
-  await page.getByRole('button', { name: 'Collapse Process assets' }).click()
-  await expect(page.getByLabel('Stages completeness')).toHaveCount(0)
+  await expandDockPanel(page, 'Assets')
+  await expect(page.getByLabel('Process completeness')).toBeVisible()
+  await page.getByRole('button', { name: 'Collapse Assets' }).click()
+  await expect(page.getByLabel('Process completeness')).toHaveCount(0)
 
   await expandDockPanel(page, 'Focus view')
   await page.getByRole('button', { name: 'Handoff paths' }).click()
@@ -62,8 +141,47 @@ test('toolbar zoom controls replace the bottom shortcut strip', async ({ page })
     return Number(status?.match(/(\d+)%/)?.[1] ?? '0')
   }).toBeGreaterThan(100)
 
-  await page.locator('.toolbar-zoom-reset').click()
+  await page.getByRole('button', { name: /zoom level/i }).click()
+  await page.getByRole('menu', { name: 'Zoom level' }).getByRole('menuitem', { name: '100%' }).click()
   await expect(page.locator(statusBar)).toContainText('100%')
+})
+
+test('zoom level menu offers presets and clamps custom values', async ({ page }) => {
+  await page.keyboard.press('0')
+  await page.getByRole('button', { name: /zoom level 100%/i }).click()
+
+  const menu = page.getByRole('menu', { name: 'Zoom level' })
+  for (const preset of ['25%', '50%', '75%', '100%', '125%', '150%', '175%', '200%']) {
+    await expect(menu.getByRole('menuitem', { name: preset, exact: true })).toBeVisible()
+  }
+
+  const presetBoxes: Record<string, { x: number; y: number }> = {}
+  for (const preset of ['25%', '50%', '75%', '100%', '125%', '150%', '175%', '200%']) {
+    const box = await menu.getByRole('menuitem', { name: preset, exact: true }).boundingBox()
+    if (!box) throw new Error(`missing ${preset} preset`)
+    presetBoxes[preset] = { x: box.x, y: box.y }
+  }
+  for (const preset of ['50%', '75%', '100%']) {
+    expect(Math.abs(presetBoxes[preset].x - presetBoxes['25%'].x)).toBeLessThanOrEqual(2)
+    expect(presetBoxes[preset].y).toBeGreaterThan(presetBoxes['25%'].y)
+  }
+  for (const pair of [['25%', '125%'], ['50%', '150%'], ['75%', '175%'], ['100%', '200%']] as const) {
+    expect(presetBoxes[pair[1]].x).toBeGreaterThan(presetBoxes[pair[0]].x)
+    expect(Math.abs(presetBoxes[pair[1]].y - presetBoxes[pair[0]].y)).toBeLessThanOrEqual(2)
+  }
+
+  await menu.getByRole('menuitem', { name: '150%', exact: true }).click()
+  await expect(page.locator(statusBar)).toContainText('150%')
+
+  await page.getByRole('button', { name: /zoom level 150%/i }).click()
+  await page.getByRole('spinbutton', { name: /custom zoom percentage/i }).fill('777')
+  await page.getByRole('button', { name: /apply custom zoom/i }).click()
+  await expect(page.locator(statusBar)).toContainText('500%')
+
+  await page.getByRole('button', { name: /zoom level 500%/i }).click()
+  await page.getByRole('spinbutton', { name: /custom zoom percentage/i }).fill('2')
+  await page.getByRole('button', { name: /apply custom zoom/i }).click()
+  await expect(page.locator(statusBar)).toContainText('5%')
 })
 
 test('connected edges show a visible arrowhead at the target end', async ({ page }) => {

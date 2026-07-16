@@ -99,7 +99,7 @@ test('typing in a block editor does not trigger canvas shortcuts', async ({ page
   await expect(titleInput).toHaveValue(/a$/)
 })
 
-test('decision node only has left+right ports after migration', async ({ page }) => {
+test('decision node has four edge ports after migration', async ({ page }) => {
   // First, save a map with a legacy 3-port decision so the migration path runs.
   await page.evaluate(async () => {
     // Wait for the gate to settle, then create a map with the legacy schema
@@ -107,8 +107,8 @@ test('decision node only has left+right ports after migration', async ({ page })
     void res
   })
 
-  // Use the UI to add a decision — the in-app addDecision now creates with
-  // 2 ports, so this validates the new-schema path.
+  // Use the UI to add a decision. New nodes now expose all four edge ports
+  // so users can connect from any side.
   await page.waitForSelector(pixiCanvas, { timeout: 30000 })
   await page.waitForTimeout(300)
   await page.keyboard.press('0')
@@ -116,7 +116,7 @@ test('decision node only has left+right ports after migration', async ({ page })
   await clickPaletteElement(page, 'Decision')
   await page.waitForTimeout(300)
 
-  // Decision appears in the saved doc with 2 ports
+  // Decision appears in the saved doc with four side ports.
   await expect.poll(async () => {
     const res = await page.request.get('/api/library')
     const body = await res.json() as { data: { maps: { document?: { nodes?: Record<string, { type?: string; ports?: { id: string; side: string }[] }> } }[] } }
@@ -124,10 +124,10 @@ test('decision node only has left+right ports after migration', async ({ page })
       Object.values(m.document?.nodes ?? {}).filter((n) => n.type === 'decision'),
     )
     return decisions.flatMap((d) => d.ports ?? []).map((p) => p.side).sort()
-  }, { timeout: 5000 }).toEqual(['left', 'right'])
+  }, { timeout: 5000 }).toEqual(['bottom', 'left', 'right', 'top'])
 })
 
-test('decision node loaded from legacy 3-port data gets migrated to 2 ports', async ({ page }) => {
+test('decision node loaded from legacy 3-port data gets migrated to four edge ports', async ({ page }) => {
   await page.waitForSelector(pixiCanvas, { timeout: 30000 })
   await page.waitForTimeout(300)
 
@@ -196,5 +196,5 @@ test('decision node loaded from legacy 3-port data gets migrated to 2 ports', as
     return (d1?.ports ?? []).map((p) => p.side).sort()
   }, created)
 
-  expect(ports).toEqual(['left', 'right'])
+  expect(ports).toEqual(['bottom', 'left', 'right', 'top'])
 })

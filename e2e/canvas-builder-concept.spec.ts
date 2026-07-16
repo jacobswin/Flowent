@@ -35,7 +35,7 @@ test('palette bottleneck button adds a semantic node and surfaces diagnostics', 
   await clickPaletteElement(page, 'Bottleneck')
 
   await expect(page.locator(statusBar)).toContainText('2 nodes')
-  await expect(page.getByText('Alignment checklist')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand Alignment' })).toBeVisible()
 })
 
 test('focus bar exposes decision and bottleneck readability modes', async ({ page }) => {
@@ -47,22 +47,47 @@ test('focus bar exposes decision and bottleneck readability modes', async ({ pag
   await expect(page.getByRole('button', { name: 'Bottlenecks' })).toHaveClass(/active/)
 })
 
-test('export button triggers an SVG download of the current map', async ({ page }) => {
-  // Intercept downloads so the test doesn't actually save a file to disk.
-  const downloadPromise = page.waitForEvent('download', { timeout: 5000 })
+test('Export downloads SVG, PDF, PNG, JPG, and a Flowent JSON backup', async ({ page }) => {
+  const exportFormat = async (label: 'SVG' | 'PDF' | 'PNG' | 'JPG' | 'Flowent JSON') => {
+    const downloadPromise = page.waitForEvent('download', { timeout: 15_000 })
+    await page.getByRole('button', { name: /^export map$/i }).click()
+    await page.getByRole('menuitem', { name: label }).click()
+    return downloadPromise
+  }
 
-  await page.getByRole('button', { name: /export map as svg/i }).click()
+  const fs = await import('node:fs/promises')
 
-  const download = await downloadPromise
-  expect(download.suggestedFilename()).toMatch(/^flowent-process-map-.*\.svg$/)
+  const svg = await exportFormat('SVG')
+  expect(svg.suggestedFilename()).toMatch(/^flowent-.*\.svg$/)
+  const svgPath = await svg.path()
+  if (svgPath) {
+    const content = await fs.readFile(svgPath, 'utf8')
+    expect(content.startsWith('<?xml')).toBe(true)
+    expect(content).toContain('<svg')
+  }
 
-  // Validate the downloaded SVG payload is well-formed.
-  const path = await download.path()
-  if (path) {
-    const fs = await import('node:fs/promises')
-    const svg = await fs.readFile(path, 'utf8')
-    expect(svg.startsWith('<?xml')).toBe(true)
-    expect(svg).toContain('<svg')
-    expect(svg).toContain('</svg>')
+  const pdf = await exportFormat('PDF')
+  expect(pdf.suggestedFilename()).toMatch(/^flowent-.*\.pdf$/)
+  const pdfPath = await pdf.path()
+  if (pdfPath) expect((await fs.readFile(pdfPath)).subarray(0, 4).toString()).toBe('%PDF')
+
+  const png = await exportFormat('PNG')
+  expect(png.suggestedFilename()).toMatch(/^flowent-.*\.png$/)
+  const pngPath = await png.path()
+  if (pngPath) expect((await fs.readFile(pngPath)).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+
+  const jpg = await exportFormat('JPG')
+  expect(jpg.suggestedFilename()).toMatch(/^flowent-.*\.jpg$/)
+  const jpgPath = await jpg.path()
+  if (jpgPath) expect((await fs.readFile(jpgPath)).subarray(0, 2).toString('hex')).toBe('ffd8')
+
+  const backup = await exportFormat('Flowent JSON')
+  expect(backup.suggestedFilename()).toMatch(/^flowent-.*\.flowent\.json$/)
+  const backupPath = await backup.path()
+  if (backupPath) {
+    const data = JSON.parse(await fs.readFile(backupPath, 'utf8')) as { format: string; version: number; document: unknown }
+    expect(data.format).toBe('flowent-map')
+    expect(data.version).toBe(1)
+    expect(data.document).toBeTruthy()
   }
 })

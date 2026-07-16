@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GraphNode } from '../canvasTypes'
-import { getFallbackPortId, getPortAnchor, getPortSide } from './ports'
+import { getBoundaryAnchor, getFallbackPortId, getPortAnchor, getPortSide } from './ports'
 
 function makeNode(overrides: Partial<GraphNode> = {}): GraphNode {
   return {
@@ -30,6 +30,36 @@ describe('port routing helpers', () => {
     expect(getPortAnchor(node, 'out')).toEqual({ x: 320, y: 248, side: 'right' })
     expect(getPortAnchor(node, 'top')).toEqual({ x: 210, y: 200, side: 'top' })
     expect(getPortAnchor(node, 'bottom')).toEqual({ x: 210, y: 296, side: 'bottom' })
+  })
+
+  it('resolves anchors at arbitrary offsets along a node edge', () => {
+    const node = makeNode()
+
+    expect(getPortAnchor(node, 'out', 'source', { side: 'right', offset: 0.25 })).toEqual({
+      x: 320,
+      y: 224,
+      side: 'right',
+    })
+    expect(getPortAnchor(node, 'top', 'source', { side: 'top', offset: 0.75 })).toEqual({
+      x: 265,
+      y: 200,
+      side: 'top',
+    })
+  })
+
+  it('returns the closest edge anchor and offset for a point near the node boundary', () => {
+    const node = makeNode()
+
+    expect(getBoundaryAnchor(node, { x: 230, y: 199 })).toEqual({
+      id: 'top',
+      side: 'top',
+      anchor: { side: 'top', offset: expect.closeTo(0.5909, 3) },
+    })
+    expect(getBoundaryAnchor(node, { x: 321, y: 272 })).toEqual({
+      id: 'out',
+      side: 'right',
+      anchor: { side: 'right', offset: 0.75 },
+    })
   })
 
   it('falls back to source and target ports when a requested port is missing', () => {

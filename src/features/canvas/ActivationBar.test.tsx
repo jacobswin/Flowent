@@ -2,12 +2,35 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ActivationBar } from './ActivationBar'
 import type { ActivationState } from './activation/processActivation'
+import type { ProcessIntelligenceReport } from './diagnostics/processIntelligence'
 
 const base: ActivationState = {
   status: 'unactivated',
   activatedAt: null,
   lastEditedAt: null,
   baselineDiagnosticCount: null,
+}
+
+const measuredProcess: ProcessIntelligenceReport = {
+  profile: 'saas',
+  measurementsComplete: true,
+  dataGaps: [],
+  metrics: {
+    totalMinutesP50: 80,
+    totalMinutesP90: 130,
+    valueAddMinutesP50: 10,
+    waitMinutesP50: 50,
+    reworkMinutesP50: 20,
+    processCycleEfficiency: 0.125,
+    waitShare: 0.625,
+    reworkShare: 0.25,
+    verdict: 'typical',
+    throughputPerHour: 6,
+  },
+  findings: [{
+    rule: 'R1', severity: 'high', title: 'Slow stage: Wait for review',
+    detail: 'P50 50 min versus value-add mean 10 min.', nodeIds: ['wait-review'], impactMinutesP50: 50,
+  }],
 }
 
 describe('ActivationBar', () => {
@@ -50,6 +73,26 @@ describe('ActivationBar', () => {
     expect(screen.getByText(/3 bottlenecks/i)).toBeInTheDocument()
     expect(screen.getByText(/1 approved/i)).toBeInTheDocument()
     expect(screen.getByText(/2 open/i)).toBeInTheDocument()
+  })
+
+  it('shows process intelligence metrics and lets a finding select its activity', () => {
+    const onSelectProcessFinding = vi.fn()
+    render(
+      <ActivationBar
+        activation={base}
+        eligible={false}
+        reasons={[]}
+        processIntelligence={measuredProcess}
+        onSelectProcessFinding={onSelectProcessFinding}
+        onActivate={() => {}}
+      />,
+    )
+
+    expect(screen.getByText('Process intelligence')).toBeInTheDocument()
+    expect(screen.getByText('P50 80 min')).toBeInTheDocument()
+    expect(screen.getByText('P90 130 min')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /slow stage: wait for review/i }))
+    expect(onSelectProcessFinding).toHaveBeenCalledWith(measuredProcess.findings[0])
   })
 
   it('disables the activate button when not eligible', () => {

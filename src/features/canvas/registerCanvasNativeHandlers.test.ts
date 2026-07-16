@@ -67,6 +67,7 @@ function createHarness(args: {
   const zoomAt = vi.fn()
   const panBy = vi.fn()
   const moveSelectedNodes = vi.fn()
+  const graphNodesRef = { current: args.graphNodes }
 
   const canvas = {
     document: createDocumentWithNodes(args.documentNodes),
@@ -91,7 +92,7 @@ function createHarness(args: {
     pixiCanvasEl,
     hitArea: { cursor: 'default' } as Graphics,
     marqueeRect: createMarqueeRectStub(),
-    graphNodesRef: { current: args.graphNodes },
+    graphNodesRef,
     graphEdgesRef: { current: args.graphEdges ?? [] },
     getCanvas: () => canvas,
   })
@@ -101,6 +102,7 @@ function createHarness(args: {
     pixiCanvasEl,
     startConnection,
     onConnect,
+    onNodeClick,
     openEditor,
     openConnectionCreateMenu,
     cancelConnection,
@@ -108,6 +110,7 @@ function createHarness(args: {
     selectNodesInRect,
     zoomAt,
     panBy,
+    graphNodesRef,
     destroy: registration.destroy,
   }
 }
@@ -137,6 +140,74 @@ describe('registerCanvasNativeHandlers', () => {
       )
 
       expect(harness.startConnection).toHaveBeenCalledWith('activity-1', 'out')
+    } finally {
+      harness.destroy()
+    }
+  })
+
+  it('selects a node when clicking an arbitrary boundary point without dragging', () => {
+    const node = createGraphNode('activity', 'activity-1', { x: 200, y: 120 })
+    const harness = createHarness({
+      documentNodes: [node],
+      graphNodes: [node],
+    })
+
+    try {
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + 32,
+          clientY: node.y + 1,
+        }),
+      )
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerup', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + 32,
+          clientY: node.y + 1,
+        }),
+      )
+
+      expect(harness.onNodeClick).toHaveBeenCalledWith('activity-1', false)
+      expect(harness.startConnection).not.toHaveBeenCalled()
+    } finally {
+      harness.destroy()
+    }
+  })
+
+  it('does not clear selection when the node hit model catches up before pointerup', () => {
+    const node = createGraphNode('activity', 'activity-1', { x: 200, y: 120 })
+    const harness = createHarness({
+      documentNodes: [node],
+      graphNodes: [],
+    })
+
+    try {
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + 48,
+          clientY: node.y + 48,
+        }),
+      )
+
+      // A layout switch can leave the native hit model one frame behind.
+      // Once it catches up, releasing over the activity must not be treated
+      // as a blank-canvas click that clears the Pixi selection.
+      harness.graphNodesRef.current = [node]
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerup', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + 48,
+          clientY: node.y + 48,
+        }),
+      )
+
+      expect(harness.onPaneClick).not.toHaveBeenCalled()
     } finally {
       harness.destroy()
     }
@@ -239,6 +310,67 @@ describe('registerCanvasNativeHandlers', () => {
         'activity-target',
         'out',
         'out',
+        {
+          sourceAnchor: { side: 'right', offset: 0.5 },
+          targetAnchor: { side: 'right', offset: 0.5 },
+        },
+      )
+    } finally {
+      harness.destroy()
+    }
+  })
+
+  it('connects from arbitrary points on node edges and preserves edge offsets', () => {
+    const sourceNode = createGraphNode('activity', 'activity-source', { x: 200, y: 120 })
+    const targetNode = createGraphNode('activity', 'activity-target', { x: 560, y: 300 })
+    const sourcePoint = {
+      x: sourceNode.x + sourceNode.width * 0.25,
+      y: sourceNode.y,
+    }
+    const targetPoint = {
+      x: targetNode.x + targetNode.width * 0.7,
+      y: targetNode.y + targetNode.height,
+    }
+    const harness = createHarness({
+      documentNodes: [sourceNode, targetNode],
+      graphNodes: [sourceNode, targetNode],
+    })
+
+    try {
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: sourcePoint.x,
+          clientY: sourcePoint.y,
+        }),
+      )
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointermove', {
+          bubbles: true,
+          button: 0,
+          clientX: targetPoint.x,
+          clientY: targetPoint.y,
+        }),
+      )
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointerup', {
+          bubbles: true,
+          button: 0,
+          clientX: targetPoint.x,
+          clientY: targetPoint.y,
+        }),
+      )
+
+      expect(harness.onConnect).toHaveBeenCalledWith(
+        'activity-source',
+        'activity-target',
+        'top',
+        'bottom',
+        {
+          sourceAnchor: { side: 'top', offset: 0.25 },
+          targetAnchor: { side: 'bottom', offset: 0.7 },
+        },
       )
     } finally {
       harness.destroy()
@@ -316,6 +448,41 @@ describe('registerCanvasNativeHandlers', () => {
     }
   })
 
+  it('sets the canvas title to the full node name while hovering a node', () => {
+    const node = {
+      ...createGraphNode('activity', 'activity-1', { x: 200, y: 120 }),
+      title: 'Coordinate enterprise-scale compliance readiness review',
+    }
+    const harness = createHarness({
+      documentNodes: [node],
+      graphNodes: [node],
+    })
+
+    try {
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointermove', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + 48,
+          clientY: node.y + 48,
+        }),
+      )
+      expect(harness.pixiCanvasEl.title).toBe(node.title)
+
+      harness.pixiCanvasEl.dispatchEvent(
+        new MouseEvent('pointermove', {
+          bubbles: true,
+          button: 0,
+          clientX: node.x + node.width + 80,
+          clientY: node.y + node.height + 80,
+        }),
+      )
+      expect(harness.pixiCanvasEl.title).toBe('')
+    } finally {
+      harness.destroy()
+    }
+  })
+
   it('does not create a connection when the second endpoint belongs to the source node', () => {
     const sourceNode = createGraphNode('activity', 'activity-source', { x: 200, y: 120 })
     const sourceOut = getPortPosition(sourceNode, 'out')
@@ -387,8 +554,10 @@ describe('registerCanvasNativeHandlers', () => {
       expect(harness.openConnectionCreateMenu).toHaveBeenCalledWith({
         sourceNodeId: 'activity-source',
         sourcePortId: 'out',
+        sourceAnchor: { side: 'right', offset: 0.5 },
         worldPosition: { x: 720, y: 360 },
         screenPosition: { x: 720, y: 360 },
+        clientPosition: { x: 720, y: 360 },
       })
       expect(harness.onPaneClick).not.toHaveBeenCalled()
       expect(harness.cancelConnection).toHaveBeenCalled()

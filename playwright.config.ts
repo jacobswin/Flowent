@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const webPort = process.env.FLOWENT_E2E_WEB_PORT ?? '5174'
+const baseURL = `http://127.0.0.1:${webPort}`
+const reuseExistingServer = process.env.FLOWENT_E2E_REUSE_SERVER === '1'
+
 export default defineConfig({
   testDir: './e2e',
   // The library backend is a single shared file; running tests in parallel
@@ -9,7 +13,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL,
     trace: 'on-first-retry',
   },
   projects: [
@@ -23,8 +27,8 @@ export default defineConfig({
     // re-bundles dependencies on first request which makes PIXI cold-load
     // too slow for reliable tests; the production preview serves the
     // already-built bundle.
-    command: 'npm run preview',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
+    command: 'node scripts/e2e-preview.mjs',
+    url: baseURL,
+    reuseExistingServer,
   },
 })

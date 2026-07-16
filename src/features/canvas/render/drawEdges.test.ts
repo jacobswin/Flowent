@@ -30,7 +30,15 @@ vi.mock('pixi.js', async () => {
 
 import { Container } from 'pixi.js'
 import type { FederatedPointerEvent } from 'pixi.js'
-import { drawEdges, getArrowGeometry, getDisplayEdgeLabel, getEdgeStrokeColor, getSelectedEdgeMetadataText } from './drawEdges'
+import {
+  drawEdges,
+  getDisplayEdgeLabel,
+  getEdgeStrokeColor,
+  getPolylineArrowGeometry,
+  getRoundedCornerRadius,
+  getRoundedOrthogonalPath,
+  getSelectedEdgeMetadataText,
+} from './drawEdges'
 import type { GraphEdge, GraphNode } from '../canvasTypes'
 
 function makeNode(id: string, x: number, y: number): GraphNode {
@@ -115,7 +123,7 @@ describe('drawEdges labelHitLayer', () => {
 })
 
 describe('drawEdges visual helpers', () => {
-  it('draws the curve and filled arrowhead as separate graphics', () => {
+  it('draws the orthogonal route and filled arrowhead as separate graphics', () => {
     const edgeLayer = new Container()
     const nodesById = new Map<string, GraphNode>([
       ['a', makeNode('a', 0, 0)],
@@ -129,31 +137,11 @@ describe('drawEdges visual helpers', () => {
     expect(edgeLayer.children.some((child) => child.label === 'edge-arrow:e1')).toBe(true)
   })
 
-  it('places the arrowhead tip on the target endpoint and keeps the body on the incoming line', () => {
-    const leftTarget = getArrowGeometry({
-      from: { x: 120, y: 100 },
-      to: { x: 320, y: 100 },
-      cp1: { x: 170, y: 100 },
-      cp2: { x: 270, y: 100 },
-    })
-    const rightTarget = getArrowGeometry({
-      from: { x: 320, y: 100 },
-      to: { x: 120, y: 100 },
-      cp1: { x: 270, y: 100 },
-      cp2: { x: 170, y: 100 },
-    })
-    const topTarget = getArrowGeometry({
-      from: { x: 100, y: 260 },
-      to: { x: 100, y: 100 },
-      cp1: { x: 100, y: 220 },
-      cp2: { x: 100, y: 150 },
-    })
-    const bottomTarget = getArrowGeometry({
-      from: { x: 100, y: 100 },
-      to: { x: 100, y: 260 },
-      cp1: { x: 100, y: 140 },
-      cp2: { x: 100, y: 220 },
-    })
+  it('places the arrowhead tip on the target endpoint and follows the final orthogonal segment', () => {
+    const leftTarget = getPolylineArrowGeometry([{ x: 120, y: 100 }, { x: 320, y: 100 }])
+    const rightTarget = getPolylineArrowGeometry([{ x: 320, y: 100 }, { x: 120, y: 100 }])
+    const topTarget = getPolylineArrowGeometry([{ x: 100, y: 260 }, { x: 100, y: 100 }])
+    const bottomTarget = getPolylineArrowGeometry([{ x: 100, y: 100 }, { x: 100, y: 260 }])
 
     expect(leftTarget.tip).toEqual({ x: 320, y: 100 })
     expect(leftTarget.base1.x).toBeLessThan(320)
@@ -172,14 +160,9 @@ describe('drawEdges visual helpers', () => {
     expect(bottomTarget.base2.y).toBeLessThan(260)
   })
 
-  it('rotates the arrowhead with a diagonal incoming curve', () => {
-    const arrow = getArrowGeometry(
-      {
-        from: { x: 120, y: 220 },
-        to: { x: 320, y: 100 },
-        cp1: { x: 170, y: 220 },
-        cp2: { x: 270, y: 100 },
-      },
+  it('turns the arrowhead with the last segment after a 90 degree bend', () => {
+    const arrow = getPolylineArrowGeometry(
+      [{ x: 120, y: 220 }, { x: 320, y: 220 }, { x: 320, y: 100 }],
       { length: 20, halfWidth: 4 },
     )
     const baseCenter = {
@@ -188,15 +171,50 @@ describe('drawEdges visual helpers', () => {
     }
 
     expect(arrow.tip).toEqual({ x: 320, y: 100 })
-    expect(baseCenter.x).toBeLessThan(320)
+    expect(baseCenter.x).toBeCloseTo(320, 5)
     expect(baseCenter.y).toBeGreaterThan(100)
-    expect(Math.abs(arrow.base1.y - arrow.base2.y)).toBeGreaterThan(1)
+    expect(Math.abs(arrow.base1.x - arrow.base2.x)).toBeGreaterThan(1)
+  })
+
+  it('rounds 90 degree route corners with a quadratic arc while keeping straight legs', () => {
+    const path = getRoundedOrthogonalPath(
+      [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }],
+      20,
+    )
+
+    expect(path).toEqual([
+      { type: 'move', point: { x: 0, y: 0 } },
+      { type: 'line', point: { x: 80, y: 0 } },
+      { type: 'quadratic', control: { x: 100, y: 0 }, point: { x: 100, y: 20 } },
+      { type: 'line', point: { x: 100, y: 80 } },
+    ])
+  })
+
+  it('caps rounded corner radius to avoid overlapping short route legs', () => {
+    const path = getRoundedOrthogonalPath(
+      [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 30 }],
+      24,
+    )
+
+    expect(path).toContainEqual({ type: 'line', point: { x: 15, y: 0 } })
+    expect(path).toContainEqual({ type: 'quadratic', control: { x: 30, y: 0 }, point: { x: 30, y: 15 } })
+  })
+
+  it('keeps rounded corner size visually balanced across zoom levels', () => {
+    expect(getRoundedCornerRadius(1)).toBe(18)
+    expect(getRoundedCornerRadius(2)).toBe(9)
+    expect(getRoundedCornerRadius(0.5)).toBe(28)
+    expect(getRoundedCornerRadius(5)).toBe(6)
   })
 
   it('hides the label when the edge has no label', () => {
     expect(getDisplayEdgeLabel('')).toBeNull()
     expect(getDisplayEdgeLabel(undefined)).toBeNull()
     expect(getDisplayEdgeLabel('PM handoff')).toBe('PM handoff')
+  })
+
+  it('truncates long edge labels so generated handoffs do not cover nodes', () => {
+    expect(getDisplayEdgeLabel('Top-down targets feed attribute requirements')).toBe('Top-down targets feed …')
   })
 
   it('uses a dark default stroke and supports custom edge colors', () => {

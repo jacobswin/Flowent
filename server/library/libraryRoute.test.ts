@@ -44,6 +44,25 @@ describe('libraryRoute', () => {
     expect(body.data.id).toBeTypeOf('string')
   })
 
+  it('creates, updates, and lists shared roles through the element API', async () => {
+    const handle = createLibraryRouteHandler({ filePath: file })
+    const created = await dispatch(handle, new Request('http://test/api/library/elements/roles', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'DRE' }),
+    }))
+    expect(created.status).toBe(201)
+    const { data: role } = await created.json() as { data: { id: string, name: string } }
+    expect(role.name).toBe('DRE')
+
+    const updated = await dispatch(handle, new Request(`http://test/api/library/elements/roles/${role.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ description: 'Design release engineer' }),
+    }))
+    expect(updated.status).toBe(200)
+
+    const listed = await dispatch(handle, new Request('http://test/api/library/elements/roles'))
+    const body = await listed.json() as { data: Array<{ id: string, description: string }> }
+    expect(body.data).toEqual([expect.objectContaining({ id: role.id, description: 'Design release engineer' })])
+  })
+
   it('PATCH /maps/:id renames and moves', async () => {
     const handle = createLibraryRouteHandler({ filePath: file })
     const create = await dispatch(handle, new Request('http://test/api/library/maps', {

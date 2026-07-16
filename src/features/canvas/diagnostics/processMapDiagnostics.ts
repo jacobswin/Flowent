@@ -90,6 +90,16 @@ export function getProcessMapDiagnostics(doc: GraphDocument): ProcessMapDiagnost
   }
 
   for (const edge of doc.edges.values()) {
+    if (edge.legacyStageConnection) {
+      diagnostics.push({
+        id: `edge-${edge.id}-legacy-stage-connection`,
+        targetType: 'edge',
+        targetId: edge.id,
+        severity: 'warning',
+        title: 'Legacy connection is attached to a Stage',
+        detail: 'Reconnect this handoff to an Activity or Decision inside the Stage, then the compatibility marker will be removed.',
+      })
+    }
     if (!hasText(edge.expectation)) {
       diagnostics.push({
         id: `edge-${edge.id}-missing-expectation`,

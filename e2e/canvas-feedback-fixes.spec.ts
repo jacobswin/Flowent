@@ -90,22 +90,16 @@ test('fix-1: edge re-renders when a connected node moves', async ({ page }) => {
 
   // Drag the activity to a new position. The edge's endpoint should
   // move with the activity.
-  const box = await page.locator(pixiCanvas).boundingBox()
-  if (!box) throw new Error('no canvas')
-  const pos = await page.evaluate((id) => {
-    const positions = (window as unknown as { __flowentGetNodePosition?: (i: string) => { x: number; y: number } | null }).__flowentGetNodePosition?.(id as string) ?? null
-    return positions
-  }, activityId)
-  expect(pos, 'activity must have a position').toBeTruthy()
-  await page.mouse.move(box.x + pos!.x + 5, box.y + pos!.y + 5)
+  const dragStart = await getNodeScreenPoint(page, activityId!, 'center')
+  await page.mouse.move(dragStart.x, dragStart.y)
   await page.waitForTimeout(50)
   await page.mouse.down()
   await page.waitForTimeout(50)
   for (let i = 1; i <= 8; i++) {
     const t = i / 8
     await page.mouse.move(
-      box.x + pos!.x + 5 + 200 * t,
-      box.y + pos!.y + 5 + 150 * t,
+      dragStart.x + 200 * t,
+      dragStart.y + 150 * t,
     )
     await page.waitForTimeout(40)
   }
@@ -143,7 +137,6 @@ test('fix-2: two activities can be connected via the test API and via clicking t
   const statusBefore = await page.locator(statusBar).textContent()
   const beforeMatch = statusBefore?.match(/(\d+) edges/)
   const beforeCount = Number(beforeMatch?.[1] ?? '0')
-  console.log('[before edges]', beforeCount)
 
   // Path 1: the test API. Used by tests that want to skip the
   // UI and exercise the connect logic deterministically.
@@ -231,7 +224,6 @@ test('fix-3: activity ports are subtle by default, fade in on hover', async ({ p
     walk(app.stage, 0, results)
     return results
   })
-  console.log('[port alphas at rest]', JSON.stringify(initial))
   expect(initial, 'should have found port circles').toBeTruthy()
   // The port circles start at a low alpha (subtle resting state)
   // so the canvas doesn't feel busy. The per-frame redraw pass

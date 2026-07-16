@@ -101,7 +101,7 @@ test('mouse wheel notch zoomed in can be zoomed out (round trip)', async ({ page
   expect(zoom).toBeCloseTo(1, 2)
 })
 
-test('wheel zoom is clamped at 3x max', async ({ page }) => {
+test('wheel zoom is clamped at 5x max', async ({ page }) => {
   // page.goto runs in beforeEach
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
@@ -110,7 +110,7 @@ test('wheel zoom is clamped at 3x max', async ({ page }) => {
   const box = await page.locator(pixiCanvas).boundingBox()
   if (!box) throw new Error('no pixi canvas')
 
-  // Fire 20 notches in — should clamp at 300% (3x).
+  // Fire 20 notches in — should clamp at 500% (5x).
   for (let i = 0; i < 20; i++) {
     await page.evaluate(({ x, y }) => {
       const el = document.querySelector('.pixi-host canvas') as HTMLCanvasElement | null
@@ -121,6 +121,6 @@ test('wheel zoom is clamped at 3x max', async ({ page }) => {
   await page.waitForTimeout(80)
 
   const zoom = await readZoom(page)
-  expect(zoom).toBeLessThanOrEqual(3.01)
-  expect(zoom).toBeGreaterThanOrEqual(2.9)
+  expect(zoom).toBeLessThanOrEqual(5.01)
+  expect(zoom).toBeGreaterThanOrEqual(4.9)
 })

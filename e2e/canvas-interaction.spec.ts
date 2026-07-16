@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { clickPaletteElement } from './canvasDockHelpers'
+import { clickPaletteElement, resetLibrary } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -7,22 +8,12 @@ const statusBar = '.status-bar'
 test.beforeEach(async ({ page }) => {
   // Each test starts with a fresh Welcome map so node counts are
   // deterministic regardless of what previous tests left behind.
-  await page.goto('/')
-  await page.evaluate(async () => {
-    try { localStorage.clear() } catch { /* noop */ }
-    history.replaceState(null, '', '/')
-    const res = await fetch('/api/library')
-    const body = (await res.json()) as { data: { maps: { id: string }[] } }
-    for (const m of body.data.maps) {
-      await fetch(`/api/library/maps/${m.id}`, { method: 'DELETE' })
-    }
-  })
   // Reload so the gate creates a fresh "Welcome" and picks it as active
-  await page.reload()
+  await resetLibrary(page)
 })
 
 test('nodes can be dragged with the pointer', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(300)
 
@@ -68,9 +59,9 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
   const statusFinal = await page.locator(statusBar).textContent()
   expect(statusFinal).toContain('3 nodes')
 
-  // The autoLayout button is the most reliable way to confirm positions changed:
+  // The Flow layout button is the most reliable way to confirm positions changed:
   // layouting 3 nodes from overlapping should spread them out and bump zoom back to 100%.
-  await page.locator('button:has-text("Layout")').click()
+  await page.getByRole('button', { name: /flow layout/i }).click()
   await page.waitForTimeout(300)
   const statusPostLayout = await page.locator(statusBar).textContent()
   expect(statusPostLayout).toContain('3 nodes')
@@ -78,7 +69,7 @@ test('nodes can be dragged with the pointer', async ({ page }) => {
 })
 
 test('mouse wheel zooms the canvas', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
 
@@ -105,7 +96,7 @@ test('mouse wheel zooms the canvas', async ({ page }) => {
 })
 
 test('dragging empty whiteboard pans the viewport with the mouse', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -135,7 +126,7 @@ test('dragging empty whiteboard pans the viewport with the mouse', async ({ page
 })
 
 test('a mistaken connector can be rerouted from the edge properties panel', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -188,7 +179,7 @@ test('a mistaken connector can be rerouted from the edge properties panel', asyn
 })
 
 test('a selected connector can be deleted from the on-canvas action pill', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
   await page.keyboard.press('0')
@@ -224,7 +215,7 @@ test('a selected connector can be deleted from the on-canvas action pill', async
 })
 
 test('keyboard zoom-in still works after fixes', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+  attachPageDiagnostics(page)
   await page.waitForSelector(pixiCanvas)
   await page.waitForTimeout(150)
 

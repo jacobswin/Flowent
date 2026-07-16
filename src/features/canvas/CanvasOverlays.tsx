@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
-import type { ConnectionCreateRequest, ProcessEdge, ProcessNode } from './canvasTypes'
+import type { ConnectionCreateRequest, EdgeEndpointAnchor, ProcessEdge, ProcessNode } from './canvasTypes'
 import type { EdgeLabelAnchor } from './useEdgeLabelEditor'
 import { getEdgeLabelCenter } from './render/edgeGeometry'
 import type { GraphNode } from './canvasTypes'
@@ -33,7 +33,13 @@ interface CanvasOverlaysProps {
   edgeContextMenu: { edgeId: string; screenPosition: { x: number; y: number } } | null
   onPickConnectionNodeType: (type: ProcessElementType) => void
   onCancelConnectionCreate: () => void
-  onConnect: (sourceNodeId: string, targetNodeId: string, sourcePortId?: string, targetPortId?: string) => void
+  onConnect: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    sourcePortId?: string,
+    targetPortId?: string,
+    anchors?: { sourceAnchor?: EdgeEndpointAnchor; targetAnchor?: EdgeEndpointAnchor },
+  ) => void
   onOpenConnectionCreateMenu: (request: ConnectionCreateRequest) => void
   onOpenEdgeContextMenu: (edgeId: string, screenPosition: { x: number; y: number }) => void
   onCloseEdgeContextMenu: () => void
@@ -60,7 +66,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function getConnectionMenuPosition(
-  screenPosition: { x: number; y: number },
+  request: ConnectionCreateRequest,
   hostOrigin: { left: number; top: number },
 ): { left: number; top: number } {
   const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth || 1280
@@ -68,18 +74,19 @@ function getConnectionMenuPosition(
   const menuWidth = 190
   const menuHeight = 252
   const padding = 12
-  const gap = 24
+  const horizontalGap = 12
+  const verticalOffset = -10
 
-  const anchorX = screenPosition.x + hostOrigin.left
-  const anchorY = screenPosition.y + hostOrigin.top
-  let left = anchorX + gap
+  const anchorX = request.clientPosition?.x ?? request.screenPosition.x + hostOrigin.left
+  const anchorY = request.clientPosition?.y ?? request.screenPosition.y + hostOrigin.top
+  let left = anchorX + horizontalGap
   if (left + menuWidth > viewportWidth - padding) {
-    left = anchorX - menuWidth - gap
+    left = anchorX - menuWidth - horizontalGap
   }
 
-  let top = anchorY + gap
+  let top = anchorY + verticalOffset
   if (top + menuHeight > viewportHeight - padding) {
-    top = anchorY - menuHeight - gap
+    top = anchorY - menuHeight - Math.abs(verticalOffset)
   }
 
   return {
@@ -149,8 +156,10 @@ export function CanvasOverlays({
         label: selectedEdge.data?.label ?? '',
         sourceNodeId: selectedEdge.source,
         sourcePortId: selectedEdge.sourceHandle ?? 'out',
+        sourceAnchor: selectedEdge.data?.sourceAnchor,
         targetNodeId: selectedEdge.target,
         targetPortId: selectedEdge.targetHandle ?? 'in',
+        targetAnchor: selectedEdge.data?.targetAnchor,
         fromRole: selectedEdge.data?.fromRole,
         toRole: selectedEdge.data?.toRole,
         artifact: selectedEdge.data?.artifact,
@@ -164,9 +173,13 @@ export function CanvasOverlays({
   const openDefaultCreateMenu = (
     node: GraphNode,
     sourcePortId: string,
-    screenPosition?: { x: number; y: number },
+    pointer?: { screenPosition: { x: number; y: number }; clientPosition: { x: number; y: number } },
   ) => {
-    const request = buildQuickConnectorCreateRequest(node, viewport, { sourcePortId, screenPosition })
+    const request = buildQuickConnectorCreateRequest(node, viewport, {
+      sourcePortId,
+      screenPosition: pointer?.screenPosition,
+      clientPosition: pointer?.clientPosition,
+    })
     if (request) onOpenConnectionCreateMenu(request)
   }
 
@@ -189,7 +202,10 @@ export function CanvasOverlays({
     if (!sourceNode) return
 
     if (!drag.moved) {
-      openDefaultCreateMenu(sourceNode, drag.sourcePortId, pointerToCanvasScreen(event))
+      openDefaultCreateMenu(sourceNode, drag.sourcePortId, {
+        screenPosition: pointerToCanvasScreen(event),
+        clientPosition: { x: event.clientX, y: event.clientY },
+      })
       return
     }
 
@@ -201,7 +217,9 @@ export function CanvasOverlays({
     if (targetNode) {
       const targetPort = findNearestTargetPort(targetNode, worldPoint)
       if (targetPort) {
-        onConnect(drag.sourceNodeId, targetNode.id, drag.sourcePortId, targetPort.id)
+        onConnect(drag.sourceNodeId, targetNode.id, drag.sourcePortId, targetPort.id, {
+          targetAnchor: targetPort.anchor,
+        })
       }
       return
     }
@@ -209,6 +227,7 @@ export function CanvasOverlays({
     const request = buildQuickConnectorCreateRequest(sourceNode, viewport, {
       sourcePortId: drag.sourcePortId,
       worldPosition: worldPoint,
+      clientPosition: { x: event.clientX, y: event.clientY },
     })
     if (request) onOpenConnectionCreateMenu(request)
   }
@@ -229,9 +248,9 @@ export function CanvasOverlays({
           <path
             d={[
               `M ${quickConnectorDrag.anchorClient.x} ${quickConnectorDrag.anchorClient.y}`,
-              `C ${quickConnectorDrag.anchorClient.x + 90} ${quickConnectorDrag.anchorClient.y}`,
-              `${quickConnectorDrag.currentClient.x - 90} ${quickConnectorDrag.currentClient.y}`,
-              `${quickConnectorDrag.currentClient.x} ${quickConnectorDrag.currentClient.y}`,
+              `H ${(quickConnectorDrag.anchorClient.x + quickConnectorDrag.currentClient.x) / 2}`,
+              `V ${quickConnectorDrag.currentClient.y}`,
+              `H ${quickConnectorDrag.currentClient.x}`,
             ].join(' ')}
           />
         </svg>
@@ -315,8 +334,8 @@ export function CanvasOverlays({
           role="menu"
           aria-label="Choose next node type"
           style={{
-            left: `${getConnectionMenuPosition(connectionCreateMenu.screenPosition, hostOrigin).left}px`,
-            top: `${getConnectionMenuPosition(connectionCreateMenu.screenPosition, hostOrigin).top}px`,
+            left: `${getConnectionMenuPosition(connectionCreateMenu, hostOrigin).left}px`,
+            top: `${getConnectionMenuPosition(connectionCreateMenu, hostOrigin).top}px`,
           }}
         >
           <div className="connection-type-menu-header">Add next</div>
@@ -547,8 +566,10 @@ export function CanvasOverlays({
                         label: edge.data?.label ?? '',
                         sourceNodeId: edge.source,
                         sourcePortId: edge.sourceHandle ?? 'out',
+                        sourceAnchor: edge.data?.sourceAnchor,
                         targetNodeId: edge.target,
                         targetPortId: edge.targetHandle ?? 'in',
+                        targetAnchor: edge.data?.targetAnchor,
                         fromRole: edge.data?.fromRole,
                         toRole: edge.data?.toRole,
                         artifact: edge.data?.artifact,

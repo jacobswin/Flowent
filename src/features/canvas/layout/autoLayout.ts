@@ -10,6 +10,8 @@ export interface LayoutOutput {
 }
 
 export async function layoutGraph(graph: LayoutInput): Promise<LayoutOutput> {
+  const layoutEdges = createLayoutEdges(graph)
+
   // Build adjacency list
   const adjacency = new Map<string, string[]>()
   const inDegree = new Map<string, number>()
@@ -19,7 +21,7 @@ export async function layoutGraph(graph: LayoutInput): Promise<LayoutOutput> {
     inDegree.set(node.id, 0)
   }
 
-  for (const edge of graph.edges) {
+  for (const edge of layoutEdges) {
     adjacency.get(edge.sourceNodeId)?.push(edge.targetNodeId)
     inDegree.set(edge.targetNodeId, (inDegree.get(edge.targetNodeId) ?? 0) + 1)
   }
@@ -80,27 +82,68 @@ export async function layoutGraph(graph: LayoutInput): Promise<LayoutOutput> {
 
   // Assign coordinates: X grows with column, Y grows with row.
   // Tuned for activity/decision boxes (width ~220, height ~96).
-  const spacingX = 360
-  const spacingY = 170
+  const maxNodeWidth = Math.max(220, ...graph.nodes.map((node) => node.width))
+  const maxNodeHeight = Math.max(96, ...graph.nodes.map((node) => node.height))
+  const spacingX = Math.max(560, maxNodeWidth + 280)
+  const spacingY = Math.max(240, maxNodeHeight + 140)
+  const maxColumnsPerRow = 6
+  const rowGap = Math.max(320, maxNodeHeight + 220)
   const startX = 220
   const startY = 130
 
   const result: LayoutOutput = { nodes: [] }
+  const rowGroupHeights: number[] = []
+  const rowGroupOffsets: number[] = []
+
+  for (let rowGroupIdx = 0; rowGroupIdx < Math.ceil(columns.length / maxColumnsPerRow); rowGroupIdx++) {
+    const rowColumns = columns.slice(rowGroupIdx * maxColumnsPerRow, (rowGroupIdx + 1) * maxColumnsPerRow)
+    rowGroupHeights.push(Math.max(spacingY, ...rowColumns.map((column) => column.length * spacingY)))
+    rowGroupOffsets.push(rowGroupHeights.slice(0, rowGroupIdx).reduce((sum, height) => sum + height + rowGap, 0))
+  }
 
   for (let columnIdx = 0; columnIdx < columns.length; columnIdx++) {
     const column = columns[columnIdx]
+    const rowGroupIdx = Math.floor(columnIdx / maxColumnsPerRow)
+    const visualColumnIdx = columnIdx % maxColumnsPerRow
+    const rowGroupHeight = rowGroupHeights[rowGroupIdx] ?? spacingY
     const columnHeight = column.length * spacingY
-    const offsetY = startY + (800 - columnHeight) / 2
+    const offsetY = startY + rowGroupOffsets[rowGroupIdx] + (rowGroupHeight - columnHeight) / 2
 
     for (let rowIdx = 0; rowIdx < column.length; rowIdx++) {
       const nodeId = column[rowIdx]
       result.nodes.push({
         id: nodeId,
-        x: startX + columnIdx * spacingX,
+        x: startX + visualColumnIdx * spacingX,
         y: offsetY + rowIdx * spacingY,
       })
     }
   }
 
   return result
+}
+
+function createLayoutEdges(graph: LayoutInput): GraphEdge[] {
+  const nodeIds = new Set(graph.nodes.map((node) => node.id))
+  const order = new Map<string, number>()
+  let nextOrder = 1
+
+  for (const node of graph.nodes) {
+    if (node.id === 'start') {
+      order.set(node.id, 0)
+    } else if (node.id === 'end') {
+      order.set(node.id, graph.nodes.length + 1)
+    } else {
+      order.set(node.id, nextOrder)
+      nextOrder += 1
+    }
+  }
+
+  return graph.edges.filter((edge) => {
+    if (!nodeIds.has(edge.sourceNodeId) || !nodeIds.has(edge.targetNodeId)) return false
+    if (edge.sourceNodeId === edge.targetNodeId) return false
+
+    const sourceOrder = order.get(edge.sourceNodeId) ?? 0
+    const targetOrder = order.get(edge.targetNodeId) ?? 0
+    return sourceOrder < targetOrder
+  })
 }

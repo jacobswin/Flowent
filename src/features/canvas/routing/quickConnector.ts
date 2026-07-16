@@ -1,4 +1,4 @@
-import type { ConnectionCreateRequest, GraphNode, GraphViewport } from '../canvasTypes'
+import type { ConnectionCreateRequest, EdgeEndpointAnchor, GraphNode, GraphViewport } from '../canvasTypes'
 import { getPortAnchor } from './ports'
 
 type Point = { x: number; y: number }
@@ -31,8 +31,10 @@ export function buildQuickConnectorCreateRequest(
   viewport: GraphViewport,
   options: {
     sourcePortId?: string
+    sourceAnchor?: EdgeEndpointAnchor
     worldPosition?: Point
     screenPosition?: Point
+    clientPosition?: Point
     defaultDistance?: number
   } = {},
 ): ConnectionCreateRequest | null {
@@ -48,8 +50,10 @@ export function buildQuickConnectorCreateRequest(
   return {
     sourceNodeId: node.id,
     sourcePortId,
+    ...(options.sourceAnchor ? { sourceAnchor: options.sourceAnchor } : {}),
     worldPosition,
     screenPosition: options.screenPosition ?? worldToScreen(worldPosition, viewport),
+    clientPosition: options.clientPosition,
   }
 }
 

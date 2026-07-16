@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { commentSchema } from './commentStore'
+import { PROCESS_INTELLIGENCE_PROFILE_IDS } from '../../src/features/canvas/processIntelligenceProfiles'
 
 // === Schemas ===
 
@@ -12,11 +13,20 @@ const reviewStatusSchema = z.enum(['unclear', 'disputed', 'needs-owner', 'approv
 const responsibilityKindSchema = z.enum(['responsible', 'accountable', 'supporting', 'consulted', 'informed'])
 const guidanceKindSchema = z.enum(['template', 'checklist', 'practice', 'tool', 'training', 'link', 'other'])
 const workProductActivityRelationSchema = z.enum(['input', 'output'])
+const aiProviderProtocolSchema = z.enum(['openai-compatible', 'anthropic'])
+const processStageKindSchema = z.enum(['value-add', 'wait', 'rework'])
+const processAnalysisProfileSchema = z.enum(PROCESS_INTELLIGENCE_PROFILE_IDS)
 
-const activityResponsibilitySchema = z.object({
-  id: z.string(),
-  roleName: z.string(),
-  kind: responsibilityKindSchema,
+const processStageSchema = z.object({
+  kind: processStageKindSchema,
+  durationMinutesP50: z.number().finite().positive().optional(),
+  durationMinutesP90: z.number().finite().positive().optional(),
+  classificationSource: z.enum(['explicit', 'inferred']),
+})
+
+const processAnalysisSettingsSchema = z.object({
+  profile: processAnalysisProfileSchema,
+  wip: z.number().finite().positive().optional(),
 })
 
 const workProductActivityLinkSchema = z.object({
@@ -24,6 +34,119 @@ const workProductActivityLinkSchema = z.object({
   nodeId: z.string(),
   relation: workProductActivityRelationSchema,
   maturity: z.string(),
+})
+
+const sharedRoleSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(160),
+  description: z.string().default(''),
+})
+
+const sharedWorkProductSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  state: z.string().default('Draft'),
+  description: z.string().default(''),
+})
+
+const sharedActivityResponsibilitySchema = z.object({
+  id: z.string().min(1),
+  roleId: z.string().min(1),
+  kind: responsibilityKindSchema,
+})
+
+const sharedActivitySchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  summary: z.string().default(''),
+  expectations: z.string().default(''),
+  responsibilities: z.array(sharedActivityResponsibilitySchema).default([]),
+  workProductLinks: z.array(z.object({
+    id: z.string().min(1),
+    workProductId: z.string().min(1),
+    relation: workProductActivityRelationSchema,
+    maturity: z.string(),
+  })).default([]),
+})
+
+const sharedProcessPlacementSchema = z.object({
+  id: z.string().min(1),
+  activityId: z.string().min(1),
+  x: z.number(),
+  y: z.number(),
+})
+
+const sharedProcessHandoffSchema = z.object({
+  id: z.string().min(1),
+  sourceNodeId: z.string().min(1).optional(),
+  targetNodeId: z.string().min(1).optional(),
+  sourcePlacementId: z.string().min(1).optional(),
+  targetPlacementId: z.string().min(1).optional(),
+  label: z.string().default(''),
+  color: z.string().optional(),
+})
+
+const sharedProcessDecisionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  criteria: z.string().default(''),
+  ownerRoleId: z.string().min(1).optional(),
+  decisionOutcomes: z.array(z.string()).default([]),
+  x: z.number(),
+  y: z.number(),
+})
+
+const sharedProcessStageMilestoneSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().default(''),
+  workProductStates: z.array(z.object({
+    workProductId: z.string().min(1),
+    state: z.string(),
+  })).default([]),
+})
+
+const sharedProcessStageSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().default(''),
+  goal: z.string().default(''),
+  entryCondition: z.string().default(''),
+  exitCondition: z.string().default(''),
+  ownerRoleId: z.string().min(1).optional(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  memberIds: z.array(z.string()).default([]),
+  milestones: z.array(sharedProcessStageMilestoneSchema).default([]),
+})
+
+export const sharedElementLibrarySchema = z.object({
+  roles: z.record(z.string(), sharedRoleSchema).default({}),
+  workProducts: z.record(z.string(), sharedWorkProductSchema).default({}),
+  activities: z.record(z.string(), sharedActivitySchema).default({}),
+  processes: z.record(z.string(), z.object({
+    id: z.string().min(1),
+    title: z.string().min(1).max(200),
+    description: z.string().default(''),
+    activities: z.array(sharedProcessPlacementSchema).default([]),
+    decisions: z.array(sharedProcessDecisionSchema).default([]),
+    stages: z.array(sharedProcessStageSchema).default([]),
+    handoffs: z.array(sharedProcessHandoffSchema).default([]),
+  })).default({}),
+}).default({
+  roles: {},
+  workProducts: {},
+  activities: {},
+  processes: {},
+})
+
+const activityResponsibilitySchema = z.object({
+  id: z.string(),
+  roleName: z.string(),
+  roleId: z.string().optional(),
+  kind: responsibilityKindSchema,
 })
 
 const workProductAssetSchema = z.object({
@@ -36,6 +159,7 @@ const workProductAssetSchema = z.object({
   consumerNodeIds: z.array(z.string()),
   handoffEdgeIds: z.array(z.string()),
   guidanceIds: z.array(z.string()),
+  sharedWorkProductId: z.string().optional(),
 })
 
 const guidanceAssetSchema = z.object({
@@ -54,6 +178,8 @@ const milestoneAssetSchema = z.object({
   title: z.string(),
   description: z.string(),
   stageNodeId: z.string().nullable(),
+  sharedProcessStageId: z.string().optional(),
+  sharedProcessMilestoneId: z.string().optional(),
   workProductStates: z.array(z.object({
     workProductId: z.string(),
     state: z.string(),
@@ -92,16 +218,32 @@ const nodeSchema = z.object({
   suspectedCause: z.string().optional(),
   reviewStatus: reviewStatusSchema.optional(),
   responsibilities: z.array(activityResponsibilitySchema).optional(),
+  sharedActivityId: z.string().optional(),
+  processInstanceId: z.string().optional(),
+  sharedProcessPlacementId: z.string().optional(),
+  sharedProcessDecisionId: z.string().optional(),
+  sharedProcessStageId: z.string().optional(),
+  memberNodeIds: z.array(z.string()).optional(),
+  ownerRoleId: z.string().optional(),
+  stagePadding: z.number().finite().positive().optional(),
+  processStage: processStageSchema.optional(),
   assetSummary: z.any().optional(),
   ports: z.array(z.object({ id: z.string(), side: z.enum(['top', 'right', 'bottom', 'left']) })),
+})
+
+const edgeEndpointAnchorSchema = z.object({
+  side: z.enum(['top', 'right', 'bottom', 'left']),
+  offset: z.number(),
 })
 
 const edgeSchema = z.object({
   id: z.string(),
   sourceNodeId: z.string(),
   sourcePortId: z.string(),
+  sourceAnchor: edgeEndpointAnchorSchema.optional(),
   targetNodeId: z.string(),
   targetPortId: z.string(),
+  targetAnchor: edgeEndpointAnchorSchema.optional(),
   label: z.string(),
   color: z.string().optional(),
   kind: z.literal('handoff').optional(),
@@ -113,6 +255,9 @@ const edgeSchema = z.object({
   reviewStatus: reviewStatusSchema.optional(),
   workProductIds: z.array(z.string()).optional(),
   assetSummary: z.any().optional(),
+  processInstanceId: z.string().optional(),
+  sharedProcessHandoffId: z.string().optional(),
+  legacyStageConnection: z.boolean().optional(),
 })
 
 const documentSchema = z.object({
@@ -120,10 +265,26 @@ const documentSchema = z.object({
   nodes: z.record(z.string(), nodeSchema),
   edges: z.record(z.string(), edgeSchema),
   processAssets: processAssetsSchema,
+  processInstances: z.record(z.string(), z.object({
+    id: z.string(),
+    processId: z.string(),
+    x: z.number(),
+    y: z.number(),
+    nodeIdsByPlacement: z.record(z.string(), z.string()),
+    nodeIdsByDecision: z.record(z.string(), z.string()).default({}),
+    stageNodeIdsByStage: z.record(z.string(), z.string()).default({}),
+    edgeIdsByHandoff: z.record(z.string(), z.string()),
+  })).default({}),
   selectedNodeIds: z.array(z.string()),
   selectedEdgeIds: z.array(z.string()),
   viewport: z.object({ x: z.number(), y: z.number(), zoom: z.number() }),
-  meta: z.object({ dirty: z.boolean(), version: z.number() }),
+  meta: z.object({
+    dirty: z.boolean(),
+    version: z.number(),
+    layoutProfile: z.enum(['generated-flow', 'left-to-right', 'swimlane']).optional(),
+    layoutNodeOrder: z.array(z.string()).optional(),
+    processAnalysis: processAnalysisSettingsSchema.optional(),
+  }),
 })
 
 export const folderSchema = z.object({
@@ -149,10 +310,42 @@ export const mapSchema = z.object({
     .optional(),
 })
 
+const encryptedApiKeySchema = z.object({
+  algorithm: z.literal('aes-256-gcm'),
+  iv: z.string(),
+  ciphertext: z.string(),
+  authTag: z.string(),
+  keyPreview: z.string(),
+})
+
+const aiProviderSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120),
+  presetId: z.string().min(1),
+  protocol: aiProviderProtocolSchema,
+  apiBaseUrl: z.string(),
+  useFullUrl: z.boolean(),
+  model: z.string(),
+  websiteUrl: z.string().default(''),
+  notes: z.string().default(''),
+  encryptedApiKey: encryptedApiKeySchema.optional(),
+  isDefault: z.boolean().default(false),
+})
+
+export const aiSettingsSchema = z.object({
+  providers: z.array(aiProviderSchema).default([]),
+  defaultProviderId: z.string().nullable().default(null),
+}).default({
+  providers: [],
+  defaultProviderId: null,
+})
+
 export const librarySchema = z.object({
   folders: z.array(folderSchema),
   maps: z.array(mapSchema),
   comments: z.record(z.string(), z.array(commentSchema)).default({}),
+  aiSettings: aiSettingsSchema,
+  elementLibrary: sharedElementLibrarySchema,
 })
 
 export type SavedFolder = z.infer<typeof folderSchema>
@@ -162,7 +355,13 @@ export type SavedLibrary = z.infer<typeof librarySchema>
 // === CRUD ===
 
 export function createEmptyLibrary(): SavedLibrary {
-  return { folders: [], maps: [], comments: {} }
+  return {
+    folders: [],
+    maps: [],
+    comments: {},
+    aiSettings: { providers: [], defaultProviderId: null },
+    elementLibrary: { roles: {}, workProducts: {}, activities: {}, processes: {} },
+  }
 }
 
 export function addFolder(lib: SavedLibrary, folder: Omit<SavedFolder, never>): SavedLibrary {

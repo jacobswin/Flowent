@@ -5,6 +5,7 @@ import type {
   ProcessAssets,
   ProcessEdge,
   ProcessNode,
+  ProcessStageData,
   ResponsibilityKind,
 } from './canvasTypes'
 import { EDGE_COLOR_SWATCHES, normalizeEdgeColor } from './edgeColors'
@@ -14,7 +15,9 @@ import {
   WORK_PRODUCT_MATURITY_OPTIONS,
   getWorkProductActivityLinks,
   hasWorkProductActivityMaturityConflict,
+  normalizeActivityResponsibilities,
 } from './processAssets'
+import type { SharedRole } from './sharedElements'
 
 function makeFieldId(prefix: string, label: string): string {
   // Stable per label so a double-click into the same node keeps the
@@ -28,6 +31,8 @@ interface PropertiesPanelProps {
   nodes?: ProcessNode[]
   processAssets?: ProcessAssets
   assetActions?: PropertiesPanelAssetActions
+  sharedRoles?: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
   onUpdateNode: (nodeId: string, data: Record<string, unknown>) => void
   onUpdateEdge: (edgeId: string, data: Record<string, unknown>) => void
   onDeleteEdge?: () => void
@@ -64,6 +69,8 @@ export function PropertiesPanel({
   nodes = [],
   processAssets = EMPTY_PROCESS_ASSETS,
   assetActions = {},
+  sharedRoles = [],
+  onEnsureSharedRoles,
   onUpdateNode,
   onUpdateEdge,
   onDeleteEdge,
@@ -82,7 +89,7 @@ export function PropertiesPanel({
         </button>
       </div>
 
-      {node && <NodeEditor node={node} processAssets={processAssets} assetActions={assetActions} onUpdate={onUpdateNode} />}
+      {node && <NodeEditor node={node} nodes={nodes} processAssets={processAssets} assetActions={assetActions} sharedRoles={sharedRoles} onEnsureSharedRoles={onEnsureSharedRoles} onUpdate={onUpdateNode} />}
       {edge && !node && (
         <HandoffEditor
           edge={edge}
@@ -136,12 +143,15 @@ function edgeSwatchStyle(color: string): CSSProperties {
 
 interface NodeEditorProps {
   node: ProcessNode
+  nodes: ProcessNode[]
   processAssets: ProcessAssets
   assetActions: PropertiesPanelAssetActions
+  sharedRoles: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }
 
-function NodeEditor({ node, processAssets, assetActions, onUpdate }: NodeEditorProps) {
+function NodeEditor({ node, nodes, processAssets, assetActions, sharedRoles, onEnsureSharedRoles, onUpdate }: NodeEditorProps) {
   const data = node.data
 
   if (data.kind === 'start' || data.kind === 'end') {
@@ -154,11 +164,13 @@ function NodeEditor({ node, processAssets, assetActions, onUpdate }: NodeEditorP
         nodeId={node.id}
         title={data.title}
         summary={data.summary}
-        roleIds={data.roleIds}
         responsibilities={data.responsibilities ?? []}
         expectations={data.expectations ?? ''}
+        processStage={data.processStage}
         processAssets={processAssets}
         assetActions={assetActions}
+        sharedRoles={sharedRoles}
+        onEnsureSharedRoles={onEnsureSharedRoles}
         onUpdate={onUpdate}
       />
     )
@@ -169,7 +181,7 @@ function NodeEditor({ node, processAssets, assetActions, onUpdate }: NodeEditorP
   }
 
   if (data.kind === 'stage') {
-    return <StageEditor nodeId={node.id} data={data} processAssets={processAssets} assetActions={assetActions} onUpdate={onUpdate} />
+    return <StageEditor nodeId={node.id} data={data} nodes={nodes} processAssets={processAssets} assetActions={assetActions} sharedRoles={sharedRoles} onEnsureSharedRoles={onEnsureSharedRoles} onUpdate={onUpdate} />
   }
 
   if (data.kind === 'bottleneck') {
@@ -183,11 +195,13 @@ interface ActivityEditorProps {
   nodeId: string
   title: string
   summary: string
-  roleIds: string[]
   responsibilities: ActivityResponsibility[]
   expectations: string
+  processStage?: ProcessStageData
   processAssets: ProcessAssets
   assetActions: PropertiesPanelAssetActions
+  sharedRoles: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }
 
@@ -195,44 +209,22 @@ function ActivityEditor({
   nodeId,
   title,
   summary,
-  roleIds,
   responsibilities,
   expectations,
+  processStage,
   processAssets,
   assetActions,
+  sharedRoles,
+  onEnsureSharedRoles,
   onUpdate,
 }: ActivityEditorProps) {
   const [titleDraft, setTitleDraft] = useDraft(title)
   const [summaryDraft, setSummaryDraft] = useDraft(summary)
   const [expectationsDraft, setExpectationsDraft] = useDraft(expectations)
-  // Local draft for the role-tag input. The committed list lives in
-  // the document; the input just adds new tags on Enter.
-  const [roleDraft, setRoleDraft] = useDraft('')
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
     onUpdate(nodeId, { title: titleDraft, summary: summaryDraft, expectations: expectationsDraft })
-  }
-
-  function commitRole(rawValue: string): void {
-    const trimmed = rawValue.trim()
-    if (!trimmed) return
-    if (roleIds.includes(trimmed)) {
-      setRoleDraft('')
-      return
-    }
-    onUpdate(nodeId, { roleIds: [...roleIds, trimmed] })
-    setRoleDraft('')
-  }
-
-  function handleRoleKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
-    if (event.key !== 'Enter' && event.key !== ',') return
-    event.preventDefault()
-    commitRole(event.currentTarget.value)
-  }
-
-  function handleRoleRemove(role: string): void {
-    onUpdate(nodeId, { roleIds: roleIds.filter((r) => r !== role) })
   }
 
   return (
@@ -261,42 +253,14 @@ function ActivityEditor({
         onBlur={(event) => onUpdate(nodeId, { expectations: event.currentTarget.value })}
         rows={3}
       />
-      <label htmlFor={makeFieldId('activity', 'Add role')}>Add role</label>
-      <input
-        id={makeFieldId('activity', 'Add role')}
-        className="properties-role-input"
-        value={roleDraft}
-        onChange={(e) => setRoleDraft(e.target.value)}
-        onKeyDown={handleRoleKeyDown}
-        onBlur={(event) => {
-          // Commit any pending text on blur (treat as a soft commit).
-          commitRole(event.currentTarget.value)
-        }}
-        placeholder="Type a role and press Enter"
-      />
-      {roleIds.length > 0 && (
-        <ul className="role-tag-chips" aria-label="Role tags">
-          {roleIds.map((role) => (
-            <li key={role} className="role-tag-chip">
-              <span>{role}</span>
-              <button
-                type="button"
-                className="role-tag-chip-remove"
-                onClick={() => handleRoleRemove(role)}
-                aria-label={`Remove role ${role}`}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       <RasicEditor
         nodeId={nodeId}
         responsibilities={responsibilities}
-        onAdd={assetActions.addResponsibility}
-        onRemove={assetActions.removeResponsibility}
+        sharedRoles={sharedRoles}
+        onEnsureSharedRoles={onEnsureSharedRoles}
+        onChange={(next) => onUpdate(nodeId, { responsibilities: next })}
       />
+      <ProcessStageEditor nodeId={nodeId} processStage={processStage} onUpdate={onUpdate} />
       <ActivityWorkProductsEditor
         nodeId={nodeId}
         relation="input"
@@ -322,6 +286,73 @@ function ActivityEditor({
         onLinkWorkProduct={assetActions.linkGuidanceToWorkProduct}
       />
     </form>
+  )
+}
+
+function ProcessStageEditor({
+  nodeId,
+  processStage,
+  onUpdate,
+}: {
+  nodeId: string
+  processStage?: ProcessStageData
+  onUpdate: (nodeId: string, data: Record<string, unknown>) => void
+}) {
+  const [p50Draft, setP50Draft] = useDraft(processStage?.durationMinutesP50?.toString() ?? '')
+  const [p90Draft, setP90Draft] = useDraft(processStage?.durationMinutesP90?.toString() ?? '')
+
+  function updateStage(patch: Partial<ProcessStageData>): void {
+    onUpdate(nodeId, {
+      processStage: {
+        kind: processStage?.kind ?? 'value-add',
+        classificationSource: processStage?.classificationSource ?? 'explicit',
+        ...processStage,
+        ...patch,
+      },
+    })
+  }
+
+  function commitDuration(field: 'durationMinutesP50' | 'durationMinutesP90', value: string): void {
+    const parsed = Number(value)
+    updateStage({ [field]: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined })
+  }
+
+  return (
+    <section className="properties-section" aria-label="Process intelligence">
+      <h4>Process intelligence</h4>
+      <label htmlFor={makeFieldId('activity', 'Stage classification')}>Stage classification</label>
+      <select
+        id={makeFieldId('activity', 'Stage classification')}
+        value={processStage?.kind ?? 'value-add'}
+        onChange={(event) => updateStage({ kind: event.target.value as ProcessStageData['kind'], classificationSource: 'explicit' })}
+      >
+        <option value="value-add">Value-add</option>
+        <option value="wait">Wait</option>
+        <option value="rework">Rework</option>
+      </select>
+      <label htmlFor={makeFieldId('activity', 'P50 duration (minutes)')}>P50 duration (minutes)</label>
+      <input
+        id={makeFieldId('activity', 'P50 duration (minutes)')}
+        type="number"
+        min="0"
+        step="any"
+        value={p50Draft}
+        onChange={(event) => setP50Draft(event.target.value)}
+        onBlur={(event) => commitDuration('durationMinutesP50', event.currentTarget.value)}
+        placeholder="Measured P50"
+      />
+      <label htmlFor={makeFieldId('activity', 'P90 duration (minutes)')}>P90 duration (minutes)</label>
+      <input
+        id={makeFieldId('activity', 'P90 duration (minutes)')}
+        type="number"
+        min="0"
+        step="any"
+        value={p90Draft}
+        onChange={(event) => setP90Draft(event.target.value)}
+        onBlur={(event) => commitDuration('durationMinutesP90', event.currentTarget.value)}
+        placeholder="Measured P90"
+      />
+    </section>
   )
 }
 
@@ -528,14 +559,20 @@ function ConnectionColorPicker({
 function StageEditor({
   nodeId,
   data,
+  nodes,
   processAssets,
   assetActions,
+  sharedRoles,
+  onEnsureSharedRoles,
   onUpdate,
 }: {
   nodeId: string
   data: Extract<ProcessNode['data'], { kind: 'stage' }>
+  nodes: ProcessNode[]
   processAssets: ProcessAssets
   assetActions: PropertiesPanelAssetActions
+  sharedRoles: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void
 }) {
   return (
@@ -544,7 +581,29 @@ function StageEditor({
       <SemanticTextArea prefix="stage" label="Goal" value={data.goal} onCommit={(value) => onUpdate(nodeId, { goal: value })} />
       <SemanticTextArea prefix="stage" label="Entry condition" value={data.entryCondition} onCommit={(value) => onUpdate(nodeId, { entryCondition: value })} />
       <SemanticTextArea prefix="stage" label="Exit condition" value={data.exitCondition} onCommit={(value) => onUpdate(nodeId, { exitCondition: value })} />
-      <SemanticTextInput prefix="stage" label="Owner" value={data.owner} onCommit={(value) => onUpdate(nodeId, { owner: value })} />
+      <StageOwnerInput
+        nodeId={nodeId}
+        owner={data.owner}
+        ownerRoleId={data.ownerRoleId}
+        sharedRoles={sharedRoles}
+        onEnsureSharedRoles={onEnsureSharedRoles}
+        onUpdate={onUpdate}
+      />
+      <label htmlFor={makeFieldId('stage', 'Container padding')}>Container padding</label>
+      <input
+        id={makeFieldId('stage', 'Container padding')}
+        type="number"
+        min="24"
+        max="160"
+        value={data.stagePadding ?? 36}
+        onChange={(event) => onUpdate(nodeId, { stagePadding: Number(event.currentTarget.value) || 36 })}
+      />
+      <StageMembersEditor
+        stageNodeId={nodeId}
+        memberNodeIds={data.memberNodeIds ?? []}
+        nodes={nodes}
+        onChange={(memberNodeIds) => onUpdate(nodeId, { memberNodeIds })}
+      />
       <StageMilestonesEditor
         stageNodeId={nodeId}
         processAssets={processAssets}
@@ -556,70 +615,267 @@ function StageEditor({
   )
 }
 
+function StageMembersEditor({
+  stageNodeId,
+  memberNodeIds,
+  nodes,
+  onChange,
+}: {
+  stageNodeId: string
+  memberNodeIds: string[]
+  nodes: ProcessNode[]
+  onChange: (memberNodeIds: string[]) => void
+}) {
+  const [selectedId, setSelectedId] = useState('')
+  const candidates = nodes.filter((node) => node.id !== stageNodeId && (node.data.kind === 'activity' || node.data.kind === 'decision'))
+  const members = candidates.filter((node) => memberNodeIds.includes(node.id))
+  return (
+    <section className="properties-section" aria-label="Stage members">
+      <h4>Stage members</h4>
+      <p className="properties-hint">Activities and decisions connect through the stage, not to it.</p>
+      <div className="asset-linker">
+        <select aria-label="Add Stage member" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+          <option value="">Add Activity or Decision</option>
+          {candidates.filter((node) => !memberNodeIds.includes(node.id)).map((node) => (
+            <option key={node.id} value={node.id}>{getNodeOptionLabel(node)}</option>
+          ))}
+        </select>
+        <button type="button" disabled={!selectedId} onClick={() => {
+          if (!selectedId) return
+          onChange([...memberNodeIds, selectedId])
+          setSelectedId('')
+        }}>Add</button>
+      </div>
+      <AssetChipList
+        items={members.map((node) => ({ id: node.id, label: getNodeOptionLabel(node) }))}
+        removeLabel={(label) => `Remove ${label} from Stage`}
+        onRemove={(memberId) => onChange(memberNodeIds.filter((id) => id !== memberId))}
+      />
+    </section>
+  )
+}
+
+function StageOwnerInput({
+  nodeId,
+  owner,
+  ownerRoleId,
+  sharedRoles,
+  onEnsureSharedRoles,
+  onUpdate,
+}: {
+  nodeId: string
+  owner: string
+  ownerRoleId?: string
+  sharedRoles: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
+  onUpdate: (nodeId: string, data: Record<string, unknown>) => void
+}) {
+  const [draft, setDraft] = useDraft(owner)
+  const listId = `stage-owner-options-${nodeId}`
+  function commit(rawValue: string): void {
+    const value = rawValue.trim()
+    if (!value) {
+      onUpdate(nodeId, { owner: '', ownerRoleId: undefined })
+      return
+    }
+    const existing = sharedRoles.find((role) => normalizeRoleKey(role.name) === normalizeRoleKey(value))
+    onUpdate(nodeId, { owner: value, ownerRoleId: existing?.id ?? ownerRoleId })
+    if (!existing && onEnsureSharedRoles) {
+      void onEnsureSharedRoles([value]).then((roleIdsByName) => {
+        onUpdate(nodeId, { owner: value, ownerRoleId: roleIdsByName[normalizeRoleKey(value)] })
+      })
+    }
+  }
+  return (
+    <>
+      <label htmlFor={makeFieldId('stage', 'Owner')}>Owner</label>
+      <input
+        id={makeFieldId('stage', 'Owner')}
+        list={listId}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={(event) => commit(event.currentTarget.value)}
+        placeholder="Person or role"
+      />
+      <datalist id={listId}>
+        {sharedRoles.map((role) => <option key={role.id} value={role.name} />)}
+      </datalist>
+    </>
+  )
+}
+
 function RasicEditor({
   nodeId,
   responsibilities,
-  onAdd,
-  onRemove,
+  sharedRoles,
+  onEnsureSharedRoles,
+  onChange,
 }: {
   nodeId: string
   responsibilities: ActivityResponsibility[]
-  onAdd?: (nodeId: string, responsibility: { roleName: string; kind: ResponsibilityKind }) => void
-  onRemove?: (nodeId: string, responsibilityId: string) => void
+  sharedRoles: SharedRole[]
+  onEnsureSharedRoles?: (roleNames: string[]) => Promise<Record<string, string>>
+  onChange: (responsibilities: ActivityResponsibility[]) => void
 }) {
-  const roleRef = useRef<HTMLInputElement | null>(null)
-  const [kind, setKind] = useState<ResponsibilityKind>('responsible')
+  const grouped = groupResponsibilities(responsibilities)
+  const [responsibleDraft, setResponsibleDraft] = useDraft(grouped.responsible.join(', '))
+  const [accountableDraft, setAccountableDraft] = useDraft(grouped.accountable.join(', '))
+  const [supportingDraft, setSupportingDraft] = useDraft(grouped.supporting.join(', '))
+  const [consultedDraft, setConsultedDraft] = useDraft(grouped.consulted.join(', '))
+  const [informedDraft, setInformedDraft] = useDraft(grouped.informed.join(', '))
+
+  function commit(kind: ResponsibilityKind, rawValue: string): void {
+    const values: Record<ResponsibilityKind, string> = {
+      responsible: responsibleDraft,
+      accountable: accountableDraft,
+      supporting: supportingDraft,
+      consulted: consultedDraft,
+      informed: informedDraft,
+      [kind]: rawValue,
+    }
+    const next = buildResponsibilitiesFromFields(nodeId, values)
+    onChange(next)
+
+    // Free-form entry remains quick, but every committed name becomes a
+    // canonical shared Role. A second update attaches the stable role ids
+    // after the library has answered, keeping the canvas responsive.
+    if (onEnsureSharedRoles && next.length > 0) {
+      void onEnsureSharedRoles(next.map((responsibility) => responsibility.roleName)).then((roleIdsByName) => {
+        onChange(next.map((responsibility) => ({
+          ...responsibility,
+          roleId: roleIdsByName[normalizeRoleKey(responsibility.roleName)] ?? responsibility.roleId,
+        })))
+      })
+    }
+  }
 
   return (
     <section className="properties-section" aria-label="RASIC responsibilities">
       <h4>RASIC responsibilities</h4>
-      {responsibilities.length > 0 && (
-        <ul className="asset-chip-list">
-          {responsibilities.map((responsibility) => (
-            <li key={responsibility.id} className="asset-chip">
-              <span>{formatResponsibilityKind(responsibility.kind)} · {responsibility.roleName}</span>
-              {onRemove && (
-                <button
-                  type="button"
-                  aria-label={`Remove responsibility ${responsibility.roleName}`}
-                  onClick={() => onRemove(nodeId, responsibility.id)}
-                >
-                  ×
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      <label htmlFor={makeFieldId('activity', 'Responsibility kind')}>Responsibility kind</label>
-      <select
-        id={makeFieldId('activity', 'Responsibility kind')}
-        value={kind}
-        onChange={(event) => setKind(event.target.value as ResponsibilityKind)}
-      >
-        <option value="responsible">Responsible</option>
-        <option value="accountable">Accountable</option>
-        <option value="supporting">Supporting</option>
-        <option value="consulted">Consulted</option>
-        <option value="informed">Informed</option>
-      </select>
-      <label htmlFor={makeFieldId('activity', 'Responsibility role')}>Responsibility role</label>
-      <div className="asset-inline-create">
-        <input id={makeFieldId('activity', 'Responsibility role')} ref={roleRef} />
-        <button
-          type="button"
-          onClick={() => {
-            const roleName = roleRef.current?.value.trim() ?? ''
-            if (!roleName) return
-            onAdd?.(nodeId, { roleName, kind })
-            if (roleRef.current) roleRef.current.value = ''
-          }}
-        >
-          Add responsibility
-        </button>
+      <div className="rasic-fixed-fields">
+        <label htmlFor={makeFieldId('activity', 'Responsible')}>Responsible</label>
+        <input
+          id={makeFieldId('activity', 'Responsible')}
+          value={responsibleDraft}
+          onChange={(event) => setResponsibleDraft(event.target.value)}
+          onBlur={(event) => commit('responsible', event.currentTarget.value)}
+          placeholder="Person or role"
+          list="shared-role-options"
+        />
+        <RasicMultiField
+          label="Accountable"
+          value={accountableDraft}
+          onChange={setAccountableDraft}
+          onCommit={(value) => commit('accountable', value)}
+        />
+        <RasicMultiField
+          label="Supporting"
+          value={supportingDraft}
+          onChange={setSupportingDraft}
+          onCommit={(value) => commit('supporting', value)}
+        />
+        <RasicMultiField
+          label="Consulted"
+          value={consultedDraft}
+          onChange={setConsultedDraft}
+          onCommit={(value) => commit('consulted', value)}
+        />
+        <RasicMultiField
+          label="Informed"
+          value={informedDraft}
+          onChange={setInformedDraft}
+          onCommit={(value) => commit('informed', value)}
+        />
+        <datalist id="shared-role-options">
+          {sharedRoles.map((role) => <option key={role.id} value={role.name} />)}
+        </datalist>
       </div>
     </section>
   )
+}
+
+function RasicMultiField({
+  label,
+  value,
+  onChange,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  onCommit: (value: string) => void
+}) {
+  const id = makeFieldId('activity', label)
+  return (
+    <>
+      <label htmlFor={id}>{label}</label>
+      <textarea
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+          onBlur={(event) => onCommit(event.currentTarget.value)}
+          placeholder="Person or role"
+        rows={2}
+      />
+    </>
+  )
+}
+
+function groupResponsibilities(responsibilities: ActivityResponsibility[]): Record<ResponsibilityKind, string[]> {
+  return normalizeActivityResponsibilities(responsibilities).reduce<Record<ResponsibilityKind, string[]>>((grouped, responsibility) => {
+    grouped[responsibility.kind].push(responsibility.roleName)
+    return grouped
+  }, {
+    responsible: [],
+    accountable: [],
+    supporting: [],
+    consulted: [],
+    informed: [],
+  })
+}
+
+function buildResponsibilitiesFromFields(
+  nodeId: string,
+  values: Record<ResponsibilityKind, string>,
+): ActivityResponsibility[] {
+  const drafts: Array<{ roleName: string; kind: ResponsibilityKind }> = []
+  for (const roleName of parsePeopleList(values.responsible).slice(0, 1)) {
+    drafts.push({ roleName, kind: 'responsible' })
+  }
+  for (const kind of ['accountable', 'supporting', 'consulted', 'informed'] as const) {
+    for (const roleName of parsePeopleList(values[kind])) {
+      drafts.push({ roleName, kind })
+    }
+  }
+  return normalizeActivityResponsibilities(drafts.map((responsibility) => ({
+    id: makeResponsibilityId(nodeId, responsibility.roleName, responsibility.kind),
+    ...responsibility,
+  })), { nodeId })
+}
+
+function parsePeopleList(value: string): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const rawPart of value.split(/[\n,，;；]+/)) {
+    const roleName = rawPart.trim()
+    const key = roleName.toLowerCase()
+    if (!roleName || seen.has(key)) continue
+    seen.add(key)
+    result.push(roleName)
+  }
+  return result
+}
+
+function makeResponsibilityId(nodeId: string, roleName: string, kind: ResponsibilityKind): string {
+  return `responsibility-${nodeId}-${slugForId(roleName)}-${kind}`
+}
+
+function normalizeRoleKey(value: string): string {
+  return value.trim().toLocaleLowerCase()
+}
+
+function slugForId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'role'
 }
 
 function ActivityWorkProductsEditor({
@@ -1055,21 +1311,6 @@ function AssetChipList({
       ))}
     </ul>
   )
-}
-
-function formatResponsibilityKind(kind: ResponsibilityKind): string {
-  switch (kind) {
-    case 'responsible':
-      return 'R'
-    case 'accountable':
-      return 'A'
-    case 'supporting':
-      return 'S'
-    case 'consulted':
-      return 'C'
-    case 'informed':
-      return 'I'
-  }
 }
 
 function BottleneckEditor({

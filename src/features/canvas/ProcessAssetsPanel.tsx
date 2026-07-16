@@ -70,7 +70,7 @@ export function ProcessAssetsPanel({
     Object.keys(document.processAssets.workProducts).length +
     Object.keys(document.processAssets.guidanceItems).length +
     Object.keys(document.processAssets.milestones).length
-  const completeness = getStagesCompleteness(document)
+  const completeness = getProcessCompleteness(document)
 
   const selectAsset = (kind: AssetKind, id: string) => {
     setLocalSelection({ kind, id })
@@ -102,11 +102,14 @@ export function ProcessAssetsPanel({
       className="process-assets-panel"
       ariaLabel="Process assets"
       storageKey="flowent:top-dock:process-assets:collapsed"
-      title="Process assets"
+      title="Assets"
       subtitle="What / Who / When / How"
       badge={<strong>{totalAssets}</strong>}
       width={520}
-      collapsedWidth={260}
+      collapsedWidth={176}
+      collapsedMinWidth={112}
+      collapsedWeight={0.85}
+      compactTitle="Assets"
       defaultCollapsed={defaultCollapsed}
     >
       <div className="process-assets-workspace">
@@ -117,7 +120,7 @@ export function ProcessAssetsPanel({
             <TabButton active={tab === 'milestones'} onClick={() => setTab('milestones')}>Milestones</TabButton>
             <TabButton active={tab === 'perspectives'} onClick={() => setTab('perspectives')}>Perspectives</TabButton>
           </div>
-          <StagesCompletenessSummary counts={completeness} />
+          <ProcessCompletenessSummary counts={completeness} />
 
           {tab === 'workProducts' && (
             <>
@@ -215,9 +218,9 @@ function TabButton({
   )
 }
 
-function StagesCompletenessSummary({ counts }: { counts: { what: number; who: number; when: number; how: number } }) {
+function ProcessCompletenessSummary({ counts }: { counts: { what: number; who: number; when: number; how: number } }) {
   return (
-    <div className="process-assets-completeness" aria-label="Stages completeness">
+    <div className="process-assets-completeness" aria-label="Process completeness">
       <span><strong>What</strong> {counts.what}</span>
       <span><strong>Who</strong> {counts.who}</span>
       <span><strong>When</strong> {counts.when}</span>
@@ -971,7 +974,7 @@ function PerspectiveSection({ title, children }: { title: string; children: Reac
   )
 }
 
-function getStagesCompleteness(document: GraphDocument): { what: number; who: number; when: number; how: number } {
+function getProcessCompleteness(document: GraphDocument): { what: number; who: number; when: number; how: number } {
   return {
     what: Object.keys(document.processAssets.workProducts).length,
     who: Array.from(document.nodes.values()).filter((node) => (
@@ -1012,7 +1015,8 @@ function getCreateFormCopy(kind: AssetKind): { inputLabel: string; buttonLabel: 
 
 function formatWorkProductMeta(item: WorkProductAsset): string {
   const totalLinks = getWorkProductActivityLinks(item).length + item.handoffEdgeIds.length
-  return `${item.state || 'No default maturity'} · ${totalLinks} links`
+  const scope = item.sharedWorkProductId ? 'Shared across Maps' : 'This map'
+  return `${scope} · ${item.state || 'No default maturity'} · ${totalLinks} links`
 }
 
 function countGuidanceLinks(item: GuidanceAsset): number {

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 
@@ -32,8 +33,8 @@ test.beforeEach(async ({ page }) => {
   await page.reload()
 })
 
-test('LIVE: take screenshots of the canvas in several states', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+test('preview screenshots capture the canvas in several states', async ({ page }) => {
+  attachPageDiagnostics(page)
 
   await page.goto('/')
   await page.waitForSelector(pixiCanvas)
@@ -51,12 +52,11 @@ test('LIVE: take screenshots of the canvas in several states', async ({ page }) 
   await page.waitForTimeout(120)
   await page.screenshot({ path: 'test-results/02-with-nodes.png', fullPage: true })
 
-  // Auto-layout
-  await page.locator('button:has-text("Layout")').click()
+  // Flow layout
+  await page.getByRole('button', { name: /flow layout/i }).click()
   await page.waitForTimeout(300)
   await page.screenshot({ path: 'test-results/03-laid-out.png', fullPage: true })
   const beforeEdge = await page.locator('.status-bar').textContent()
-  console.log('[status before edge]', beforeEdge)
 
   // Connect start to the first activity via the public test API
   // instead of a real port drag. The smoke test is meant to
@@ -83,7 +83,6 @@ test('LIVE: take screenshots of the canvas in several states', async ({ page }) 
   // addEdge bumped the count by one.
   const beforeCount = Number(beforeEdge?.match(/(\d+) edges/)?.[1] ?? '0')
   const afterStatus = await page.locator('.status-bar').textContent()
-  console.log('[status after edge]', afterStatus)
   const afterCount = Number(afterStatus?.match(/(\d+) edges/)?.[1] ?? '0')
   expect(afterCount).toBe(beforeCount + 1)
 })

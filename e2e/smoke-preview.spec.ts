@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { clickPaletteElement } from './canvasDockHelpers'
+import { attachPageDiagnostics } from './pageDiagnostics'
 
 const pixiCanvas = '.pixi-host canvas'
 const statusBar = '.status-bar'
@@ -48,11 +49,8 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(1500)
 })
 
-test('LIVE: page loads against the dev server', async ({ page }) => {
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message))
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') console.log('[console.error]', msg.text())
-  })
+test('preview page loads against the isolated server', async ({ page }) => {
+  attachPageDiagnostics(page, { consoleErrors: true })
 
   await page.keyboard.press('0')
   await page.waitForTimeout(80)
@@ -76,13 +74,11 @@ test('LIVE: page loads against the dev server', async ({ page }) => {
 
   const startAfter = await pos('start')
   expect(startAfter!.y).toBeGreaterThan(startBefore!.y)
-  console.log('[start drag]', startBefore, '→', startAfter)
 
   // 2. add an activity, then drag it
   await clickPaletteElement(page, 'Activity')
   await page.waitForTimeout(150)
   const afterAdd = await page.locator(statusBar).textContent()
-  console.log('[after add]', afterAdd)
   expect(afterAdd).toContain('2 nodes')
 
   // Activity default is (300, 220) size 220x96 → mid (410, 268).

@@ -13,5 +13,10 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server", "src/features/process-map/types.ts", "src/features/scenario-generation/types.ts"]
+  "include": [
+    "server",
+    "src/features/canvas/**/*.ts",
+    "src/features/process-map/types.ts",
+    "src/features/scenario-generation/types.ts"
+  ]
 }

@@ -71,14 +71,60 @@ export function hasWorkProductActivityMaturityConflict(
 
 export function getActivityResponsibilities(node: GraphNode): ActivityResponsibility[] {
   if (node.responsibilities && node.responsibilities.length > 0) {
-    return node.responsibilities
+    return normalizeActivityResponsibilities(node.responsibilities, { nodeId: node.id })
   }
 
-  return node.roleTags.map((roleName) => ({
-    id: `responsibility-${node.id}-${slug(roleName)}-responsible`,
-    roleName,
-    kind: 'responsible',
-  }))
+  return normalizeActivityResponsibilities(
+    node.roleTags.map((roleName, index) => ({
+      roleName,
+      kind: index === 0 ? 'responsible' : 'supporting',
+    })),
+    { nodeId: node.id },
+  )
+}
+
+export function normalizeActivityResponsibilities(
+  responsibilities: Array<ActivityResponsibility | { id?: string; roleId?: string; roleName: string; kind: ResponsibilityKind }>,
+  options: { nodeId?: string } = {},
+): ActivityResponsibility[] {
+  const seen = new Set<string>()
+  const seenRoleNames = new Set<string>()
+  const result: ActivityResponsibility[] = []
+  let hasResponsible = false
+
+  for (const responsibility of responsibilities) {
+    const roleName = responsibility.roleName.trim()
+    if (!roleName) continue
+    const roleKey = roleName.toLowerCase()
+    if (seenRoleNames.has(roleKey)) continue
+
+    let kind = responsibility.kind
+    if (kind === 'responsible') {
+      if (hasResponsible) {
+        kind = 'supporting'
+      } else {
+        hasResponsible = true
+      }
+    }
+
+    const key = `${roleName.toLowerCase()}:${kind}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    seenRoleNames.add(roleKey)
+
+    result.push({
+      id: responsibility.id || makeResponsibilityId(roleName, kind, options.nodeId),
+      roleName,
+      ...(responsibility.roleId ? { roleId: responsibility.roleId } : {}),
+      kind,
+    })
+  }
+
+  return result
+}
+
+export function collectResponsibilityRoleTags(responsibilities: ActivityResponsibility[]): string[] {
+  return unique(responsibilities.map((responsibility) => responsibility.roleName))
 }
 
 export function addResponsibility(
@@ -94,27 +140,31 @@ export function addResponsibility(
       ? responsibility.id
       : `responsibility-${nodeId}-${slug(responsibility.roleName)}-${responsibility.kind}`,
     roleName: responsibility.roleName.trim(),
+    ...('roleId' in responsibility && responsibility.roleId ? { roleId: responsibility.roleId } : {}),
     kind: responsibility.kind,
   }
   if (!normalized.roleName) return doc
 
-  const responsibilities = dedupeResponsibilities([
+  const responsibilities = normalizeActivityResponsibilities([
     ...getActivityResponsibilities(node),
     normalized,
-  ])
+  ], { nodeId })
   return updateNode(doc, nodeId, {
     responsibilities,
-    roleTags: collectRoleTags(responsibilities),
+    roleTags: collectResponsibilityRoleTags(responsibilities),
   })
 }
 
 export function removeResponsibility(doc: GraphDocument, nodeId: string, responsibilityId: string): GraphDocument {
   const node = doc.nodes.get(nodeId)
   if (!node || node.type !== 'activity') return doc
-  const responsibilities = getActivityResponsibilities(node).filter((item) => item.id !== responsibilityId)
+  const responsibilities = normalizeActivityResponsibilities(
+    getActivityResponsibilities(node).filter((item) => item.id !== responsibilityId),
+    { nodeId },
+  )
   return updateNode(doc, nodeId, {
     responsibilities,
-    roleTags: collectRoleTags(responsibilities),
+    roleTags: collectResponsibilityRoleTags(responsibilities),
   })
 }
 
@@ -776,26 +826,16 @@ function touch(next: GraphDocument, previous: GraphDocument): GraphDocument {
   return {
     ...next,
     meta: {
+      ...previous.meta,
       dirty: true,
       version: previous.meta.version + 1,
     },
   }
 }
 
-function collectRoleTags(responsibilities: ActivityResponsibility[]): string[] {
-  return unique(responsibilities.map((responsibility) => responsibility.roleName))
-}
-
-function dedupeResponsibilities(responsibilities: ActivityResponsibility[]): ActivityResponsibility[] {
-  const seen = new Set<string>()
-  const result: ActivityResponsibility[] = []
-  for (const responsibility of responsibilities) {
-    const key = `${responsibility.roleName.toLowerCase()}:${responsibility.kind}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    result.push(responsibility)
-  }
-  return result
+function makeResponsibilityId(roleName: string, kind: ResponsibilityKind, nodeId?: string): string {
+  const scope = nodeId ? `${nodeId}-` : ''
+  return `responsibility-${scope}${slug(roleName)}-${kind}`
 }
 
 function addUnique(values: string[], value: string): string[] {

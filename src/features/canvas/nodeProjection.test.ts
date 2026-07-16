@@ -6,7 +6,7 @@ import { useCanvasState } from './useCanvasState'
 import { createEmptyDocument } from './engine/graphDocument'
 
 describe('toGraphNode', () => {
-  it('projects activity nodes with canonical dimensions and horizontal ports', () => {
+  it('projects activity nodes with canonical dimensions and four-side ports', () => {
     // Arrange
     const node: ProcessNode = {
       id: 'activity-1',
@@ -38,8 +38,10 @@ describe('toGraphNode', () => {
       roleTags: ['PM', 'Design'],
     })
     expect(graphNode.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
   })
 
@@ -76,8 +78,10 @@ describe('toGraphNode', () => {
       roleTags: [],
     })
     expect(graphNode.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
   })
 
@@ -116,8 +120,10 @@ describe('toGraphNode', () => {
       roleTags: [],
     })
     expect(graphNode.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
   })
 
@@ -156,12 +162,14 @@ describe('toGraphNode', () => {
       roleTags: [],
     })
     expect(graphNode.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
   })
 
-  it('projects start and end nodes with side-facing ports', () => {
+  it('projects start and end nodes with four-side ports', () => {
     // Arrange
     const start: ProcessNode = {
       id: 'start-1',
@@ -197,7 +205,12 @@ describe('toGraphNode', () => {
       title: 'Start',
       roleTags: [],
     })
-    expect(startNode.ports).toEqual([{ id: 'out', side: 'right' }])
+    expect(startNode.ports).toEqual([
+      { id: 'top', side: 'top' },
+      { id: 'in', side: 'left' },
+      { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
+    ])
 
     expect(endNode).toMatchObject({
       id: 'end-1',
@@ -209,7 +222,12 @@ describe('toGraphNode', () => {
       title: 'Done',
       roleTags: [],
     })
-    expect(endNode.ports).toEqual([{ id: 'in', side: 'left' }])
+    expect(endNode.ports).toEqual([
+      { id: 'top', side: 'top' },
+      { id: 'in', side: 'left' },
+      { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
+    ])
   })
 
   it('defaults sparse optional fields to the canonical graph shape', () => {
@@ -243,14 +261,18 @@ describe('toGraphNode', () => {
     // Assert
     expect(activityGraph.expectations).toBe('')
     expect(activityGraph.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
     expect(decisionGraph.decisionOutcomes).toEqual([])
     expect(decisionGraph.owner).toBe('')
     expect(decisionGraph.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
   })
 
@@ -276,8 +298,10 @@ describe('toGraphNode', () => {
     expect(graphNode.width).toBe(190)
     expect(graphNode.height).toBe(124)
     expect(graphNode.ports).toEqual([
+      { id: 'top', side: 'top' },
       { id: 'in', side: 'left' },
       { id: 'out', side: 'right' },
+      { id: 'bottom', side: 'bottom' },
     ])
     expect(graphNode.title).toBe('Broken persisted node')
     expect(graphNode.criteria).toBe('')

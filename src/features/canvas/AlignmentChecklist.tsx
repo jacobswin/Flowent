@@ -14,10 +14,13 @@ export function AlignmentChecklist({ diagnostics, onSelectDiagnostic, defaultCol
       className="alignment-checklist"
       ariaLabel="Alignment checklist"
       storageKey="flowent:top-dock:alignment-checklist:collapsed"
-      title="Alignment checklist"
+      title="Alignment"
       badge={<strong>{diagnostics.length}</strong>}
       width={260}
-      collapsedWidth={242}
+      collapsedWidth={212}
+      collapsedMinWidth={134}
+      collapsedWeight={1.15}
+      compactTitle="Align"
       defaultCollapsed={defaultCollapsed}
     >
       {diagnostics.length === 0 ? (

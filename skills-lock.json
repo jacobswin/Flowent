@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "process-mapper": {
+      "source": "alirezarezvani/claude-skills",
+      "sourceType": "github",
+      "skillPath": "business-operations/skills/process-mapper/SKILL.md",
+      "computedHash": "7dbad202f221636039f62dd194d733d88b572cb486626f087ab13f6604bccf69"
+    }
+  }
+}

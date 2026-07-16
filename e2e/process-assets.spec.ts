@@ -72,16 +72,16 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(800)
 })
 
-test('models Stages What Who When How assets and persists them', async ({ page }) => {
+test('models What / Who / When / How process assets and persists them', async ({ page }) => {
   await page.keyboard.press('0')
 
   await addElement(page, 'Activity')
   await openLatestNodeEditor(page, 'activity')
 
-  await page.getByLabel('Responsibility kind').selectOption('accountable')
-  await page.getByLabel('Responsibility role').fill('Product Manager')
-  await page.getByRole('button', { name: 'Add responsibility' }).click()
-  await expect(page.getByText('A · Product Manager')).toBeVisible()
+  const accountable = page.getByLabel('Accountable')
+  await accountable.fill('Product Manager')
+  await accountable.blur()
+  await expect(accountable).toHaveValue('Product Manager')
 
   await page.getByLabel('New output work product').fill('Discovery brief')
   await page.getByRole('button', { name: 'Add output work product' }).click()
@@ -129,8 +129,18 @@ test('models Stages What Who When How assets and persists them', async ({ page }
   })
 
   await page.getByRole('button', { name: 'Close' }).click()
+  // A Work Product can only be moved across a real handoff. Create that
+  // handoff explicitly instead of relying on palette creation to connect
+  // nodes implicitly.
+  await page.getByRole('list', { name: 'Nodes' }).getByRole('button', { name: 'New activity' }).focus()
+  await page.getByRole('button', { name: 'Quick connect from New activity' }).click()
+  await page.getByRole('menu', { name: 'Choose next node type' })
+    .getByRole('menuitem', { name: 'Activity', exact: true })
+    .click()
+  await expect(page.locator('.status-bar')).toContainText('1 edges')
+
   const assetsPanel = page.getByRole('complementary', { name: 'Process assets' })
-  await assetsPanel.getByRole('button', { name: 'Expand Process assets' }).click()
+  await assetsPanel.getByRole('button', { name: 'Expand Assets' }).click()
   await assetsPanel.getByRole('button', { name: 'Work Products', exact: true }).click()
   await assetsPanel.getByRole('button', { name: /select discovery brief/i }).click()
   await expect(assetsPanel.getByLabel('Work product title')).toHaveValue('Discovery brief')
@@ -232,7 +242,7 @@ test('allows one work product to move through different maturity levels in one a
 
   await page.getByRole('button', { name: 'Close' }).click()
   const assetsPanel = page.getByRole('complementary', { name: 'Process assets' })
-  await assetsPanel.getByRole('button', { name: 'Expand Process assets' }).click()
+  await assetsPanel.getByRole('button', { name: 'Expand Assets' }).click()
   await assetsPanel.getByRole('button', { name: 'Perspectives', exact: true }).click()
   await expect(assetsPanel.getByText('Draft -> Approved')).toBeVisible()
 

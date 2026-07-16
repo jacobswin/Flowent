@@ -75,7 +75,7 @@ describe('planQuickCreate', () => {
     })
 
     expect(plan.node.type).toBe('decision')
-    expect(getPortPosition(plan.node, 'in')).toEqual(dropPoint)
+    expect(getPortPosition(plan.node, 'in')).toEqual({ ...dropPoint, side: 'left' })
     expect(plan.edge).toMatchObject({
       id: 'edge-1',
       sourceNodeId: 'activity-1',
